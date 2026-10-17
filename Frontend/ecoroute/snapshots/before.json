@@ -1,0 +1,101 @@
+{
+  "Lodhi -> Sunder Nursery": {
+    "mood-calibrated": {
+      "path": [
+        "Lodhi Art District & Gardens",
+        "Sunder Nursery Heritage Park"
+      ],
+      "totalDistance": 1.6
+    },
+    "shade-seeker": {
+      "path": [
+        "Lodhi Art District & Gardens",
+        "Sunder Nursery Heritage Park"
+      ],
+      "totalDistance": 1.6
+    },
+    "fastest": {
+      "path": [
+        "Lodhi Art District & Gardens",
+        "Sunder Nursery Heritage Park"
+      ],
+      "totalDistance": 1.6
+    }
+  },
+  "Civil Lines -> Model Town (stand-in for the 'Northern Ridge' preset)": {
+    "mood-calibrated": {
+      "path": [
+        "Civil Lines",
+        "Model Town"
+      ],
+      "totalDistance": 3.7
+    },
+    "shade-seeker": {
+      "path": [
+        "Civil Lines",
+        "Model Town"
+      ],
+      "totalDistance": 3.7
+    },
+    "fastest": {
+      "path": [
+        "Civil Lines",
+        "Model Town"
+      ],
+      "totalDistance": 3.7
+    }
+  },
+  "Chanakyapuri -> Hauz Khas": {
+    "mood-calibrated": {
+      "path": [
+        "Chanakyapuri",
+        "Hauz Khas"
+      ],
+      "totalDistance": 5.4
+    },
+    "shade-seeker": {
+      "path": [
+        "Chanakyapuri",
+        "Hauz Khas"
+      ],
+      "totalDistance": 5.4
+    },
+    "fastest": {
+      "path": [
+        "Chanakyapuri",
+        "Hauz Khas"
+      ],
+      "totalDistance": 5.4
+    }
+  },
+  "Gurgaon Cyber Green Promenade -> Connaught Place": {
+    "mood-calibrated": {
+      "path": [
+        "Gurgaon Cyber Green Promenade",
+        "Vasant Kunj",
+        "Hauz Khas",
+        "Chanakyapuri",
+        "Connaught Place"
+      ],
+      "totalDistance": 21.9
+    },
+    "shade-seeker": {
+      "path": [
+        "Gurgaon Cyber Green Promenade",
+        "Vasant Kunj",
+        "Hauz Khas",
+        "Chanakyapuri",
+        "Connaught Place"
+      ],
+      "totalDistance": 21.9
+    },
+    "fastest": {
+      "path": [
+        "Gurgaon Cyber Green Promenade",
+        "Chanakyapuri",
+        "Connaught Place"
+      ],
+      "totalDistance": 19.7
+    }
+  }
+}
