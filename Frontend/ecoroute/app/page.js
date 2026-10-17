@@ -1,11 +1,30 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import Controls from '@/components/Controls';
 import MetricsPanel from '@/components/MetricsPanel';
 import JoyPinsPanel from '@/components/JoyPinsPanel';
 import WellbeingMetricsPanel from '@/components/WellbeingMetricsPanel';
+
+const JOURNAL_STORAGE_KEY = 'joywalk-daily-journal';
+const EMPTY_WELLBEING_JOURNAL = {
+  shadedKmWalked: 0,
+  dailyGoalKm: 5,
+  joyMomentsUnlocked: 0,
+  joyMomentsGoal: 15,
+  serenityStreakDays: 0,
+  acousticSerenityAvgDb: 0,
+  completedWalks: [],
+  lastWalkDate: null
+};
+
+function localDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 // Dynamically import Leaflet MapView with SSR disabled
 const MapView = dynamic(() => import('@/components/MapView'), {
@@ -26,15 +45,7 @@ export default function JoyWalkDashboard() {
   const [roads, setRoads] = useState([]);
   const [joyPins, setJoyPins] = useState([]);
   const [selectedPin, setSelectedPin] = useState(null);
-  const [wellbeingData, setWellbeingData] = useState({
-    shadedKmWalked: 3.8,
-    dailyGoalKm: 5.0,
-    joyMomentsUnlocked: 11,
-    joyMomentsGoal: 15,
-    serenityStreakDays: 4,
-    acousticSerenityAvgDb: 47.5,
-    completedWalks: []
-  });
+  const [wellbeingData, setWellbeingData] = useState(EMPTY_WELLBEING_JOURNAL);
 
   // --- Route Inputs ---
   const [source, setSource] = useState('Lodhi Art District & Gardens');
@@ -59,6 +70,7 @@ export default function JoyWalkDashboard() {
   const [loadingCompare, setLoadingCompare] = useState(false);
   const [loadingCommit, setLoadingCommit] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const autoRouteStartedRef = useRef(false);
   const [toast, setToast] = useState(null);
 
   // Toast Helper
@@ -84,12 +96,24 @@ export default function JoyWalkDashboard() {
 
   const fetchWellbeing = useCallback(async () => {
     try {
-      const res = await fetch('/api/wellbeing');
-      if (!res.ok) return;
-      const data = await res.json();
-      setWellbeingData(data);
+      const saved = window.localStorage.getItem(JOURNAL_STORAGE_KEY);
+      if (!saved) {
+        setWellbeingData(EMPTY_WELLBEING_JOURNAL);
+        return;
+      }
+
+      const parsed = JSON.parse(saved);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Saved journal data has an invalid format.');
+      }
+      setWellbeingData({
+        ...EMPTY_WELLBEING_JOURNAL,
+        ...parsed,
+        completedWalks: Array.isArray(parsed.completedWalks) ? parsed.completedWalks : []
+      });
     } catch (err) {
-      console.error('Fetch wellbeing error:', err);
+      console.error('Could not load the saved wellbeing journal:', err);
+      setWellbeingData(EMPTY_WELLBEING_JOURNAL);
     }
   }, []);
 
@@ -142,6 +166,31 @@ export default function JoyWalkDashboard() {
         if (!res.ok) throw new Error(data.error || 'Failed to compute scenic walk');
 
         setCurrentRoute(data);
+        setComparisonResult(null);
+        try {
+          const compareRes = await fetch('/api/compare', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              source: src,
+              target: tgt,
+              mood: currentMood,
+              serenityWeight: currentWeight
+            })
+          });
+          if (!compareRes.ok) {
+            throw new Error(`Comparison request failed with status ${compareRes.status}`);
+          }
+          const compareData = await compareRes.json();
+          if (!compareData.fastest?.path) {
+            console.warn('Fastest comparison route is unavailable; showing route metrics only.');
+          } else {
+            setComparisonResult(compareData);
+          }
+        } catch (compareError) {
+          console.warn('Fastest comparison is unavailable; showing route metrics only.', compareError);
+        }
+
         if (showToastMsg) {
           showToast(`Scenic route mapped: ${data.avgCanopyIndex}% canopy shade (${data.estimatedWalkingMinutes} min walk)`, 'border-emerald-500');
         }
@@ -223,7 +272,6 @@ export default function JoyWalkDashboard() {
         const sunderNode = nodes.find((n) => n.name.includes('Sunder'));
         if (lodhiNode) setSource(lodhiNode.name);
         if (sunderNode) setTarget(sunderNode.name);
-        // Note: We intentionally do NOT call calculateRoute here so the map starts clean!
       }
 
       if (isMounted) setInitialLoading(false);
@@ -233,6 +281,21 @@ export default function JoyWalkDashboard() {
       isMounted = false;
     };
   }, [fetchNeighborhoods, fetchJoyPins, fetchWellbeing]);
+
+  useEffect(() => {
+    if (initialLoading || autoRouteStartedRef.current || neighborhoods.length === 0) return;
+    autoRouteStartedRef.current = true;
+    calculateRoute(source, target, mode, mood, serenityWeight, false);
+  }, [
+    initialLoading,
+    neighborhoods.length,
+    calculateRoute,
+    source,
+    target,
+    mode,
+    mood,
+    serenityWeight
+  ]);
 
   // ── Input Changes ──────────────────────────────────────────────────────────
 
@@ -361,23 +424,48 @@ export default function JoyWalkDashboard() {
     if (!currentRoute?.path) return;
     setLoadingCommit(true);
     try {
-      const res = await fetch('/api/wellbeing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'log',
-          routeName: `${source} ➔ ${target}`,
-          distance: currentRoute.totalDistance,
-          avgCanopy: currentRoute.avgCanopyIndex,
-          joyPoints: currentRoute.totalJoyMoments
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      const distance = Number(currentRoute.totalDistance);
+      const avgCanopy = Number(currentRoute.avgCanopyIndex);
+      const joyPoints = Number(currentRoute.totalJoyMoments);
+      if (
+        !Number.isFinite(distance) ||
+        distance < 0 ||
+        !Number.isFinite(avgCanopy) ||
+        avgCanopy < 0 ||
+        avgCanopy > 100 ||
+        !Number.isFinite(joyPoints) ||
+        joyPoints < 0
+      ) {
+        throw new Error('The current route metrics are invalid and cannot be logged.');
+      }
 
-      await fetchWellbeing();
+      const now = new Date();
+      const today = localDateKey(now);
+      const walk = {
+        id: `walk-${now.getTime()}`,
+        date: `Today, ${now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
+        route: `${source} ➔ ${target}`,
+        distance,
+        avgCanopy,
+        joyPoints
+      };
+      const nextJournal = {
+        ...wellbeingData,
+        shadedKmWalked:
+          Math.round((wellbeingData.shadedKmWalked + distance * (avgCanopy / 100)) * 10) / 10,
+        joyMomentsUnlocked: wellbeingData.joyMomentsUnlocked + joyPoints,
+        serenityStreakDays:
+          wellbeingData.lastWalkDate === today
+            ? wellbeingData.serenityStreakDays
+            : wellbeingData.serenityStreakDays + 1,
+        lastWalkDate: today,
+        completedWalks: [walk, ...wellbeingData.completedWalks].slice(0, 30)
+      };
+      window.localStorage.setItem(JOURNAL_STORAGE_KEY, JSON.stringify(nextJournal));
+      setWellbeingData(nextJournal);
       showToast('Walk logged to your Serenity Journal', 'border-emerald-400');
     } catch (err) {
+      console.error('Could not save completed walk:', err);
       showToast(err.message || 'Failed to log walk', 'border-rose-500');
     } finally {
       setLoadingCommit(false);
@@ -386,24 +474,24 @@ export default function JoyWalkDashboard() {
 
   const handleResetJournal = async () => {
     try {
-      const res = await fetch('/api/wellbeing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reset' })
-      });
-      if (res.ok) {
-        await fetchWellbeing();
-        showToast('Daily serenity journal reset', 'border-teal-400');
-      }
+      const resetJournal = {
+        ...EMPTY_WELLBEING_JOURNAL,
+        serenityStreakDays: wellbeingData.serenityStreakDays,
+        lastWalkDate: wellbeingData.lastWalkDate
+      };
+      window.localStorage.setItem(JOURNAL_STORAGE_KEY, JSON.stringify(resetJournal));
+      setWellbeingData(resetJournal);
+      showToast('Daily serenity journal reset', 'border-teal-400');
     } catch (err) {
-      console.error(err);
+      console.error('Could not reset the saved wellbeing journal:', err);
+      showToast(err.message || 'Failed to reset journal', 'border-rose-500');
     }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#09110d] text-slate-100">
+    <div className="min-h-screen flex flex-col overflow-x-hidden bg-[#09110d] text-slate-100">
       {/* Top Header */}
       <header className="bg-[#0b1410] border-b border-white/10 sticky top-0 z-50">
         <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
@@ -440,7 +528,7 @@ export default function JoyWalkDashboard() {
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
               <span className="font-medium text-emerald-300">52 Havens</span>
               <span className="text-slate-600">·</span>
-              <span className="text-slate-400">176 Shaded Corridors</span>
+              <span className="text-slate-400">176 Corridors</span>
             </div>
           </div>
         </div>
@@ -588,6 +676,7 @@ export default function JoyWalkDashboard() {
                 compareMode={compareMode}
                 comparisonResult={comparisonResult}
                 loadingCompare={loadingCompare}
+                loadingCommit={loadingCommit}
                 onCommitRoute={handleCommitWalk}
               />
             </div>

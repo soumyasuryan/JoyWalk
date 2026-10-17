@@ -67,6 +67,7 @@ export default function JoyPinsPanel({
           <p className="text-xs text-slate-400">
             Crowd-sourced quiet nooks, acoustic spots &amp; scenic viewpoints
           </p>
+          <span className="mt-1 inline-block text-[10px] text-slate-500">Sample data</span>
         </div>
         <button
           type="button"
@@ -160,21 +161,30 @@ export default function JoyPinsPanel({
       )}
 
       {/* Category Filter Pills */}
-      <div className="flex gap-1.5 overflow-x-auto pb-1 text-xs">
-        {CATEGORIES.map((cat) => (
-          <button
-            key={cat}
-            type="button"
-            onClick={() => setSelectedCategory(cat)}
-            className={`px-3 py-1 rounded-full whitespace-nowrap transition-all cursor-pointer text-xs ${
-              selectedCategory === cat
-                ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-500/50 font-semibold'
-                : 'bg-[#121f18] text-slate-400 hover:text-slate-200 border border-white/5'
-            }`}
-          >
-            {cat}
-          </button>
-        ))}
+      <div className="relative">
+        <div
+          className="flex gap-1.5 overflow-x-auto pb-1 pr-5 text-xs"
+          style={{
+            maskImage: 'linear-gradient(to right, #000 0%, #000 92%, transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to right, #000 0%, #000 92%, transparent 100%)'
+          }}
+        >
+          {CATEGORIES.map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => setSelectedCategory(cat)}
+              title={cat}
+              className={`shrink-0 px-3 py-1 rounded-full whitespace-nowrap transition-all cursor-pointer text-xs ${
+                selectedCategory === cat
+                  ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-500/50 font-semibold'
+                  : 'bg-[#121f18] text-slate-400 hover:text-slate-200 border border-white/5'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Pins Feed */}
@@ -194,10 +204,16 @@ export default function JoyPinsPanel({
                 onClick={() => onSelectPin && onSelectPin(pin)}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-white group-hover:text-emerald-300 transition-colors truncate">
+                  <span
+                    className="min-w-0 flex-1 text-xs font-semibold text-white group-hover:text-emerald-300 transition-colors line-clamp-2 break-words"
+                    title={pin.title}
+                  >
                     {pin.title}
                   </span>
-                  <span className="text-[10px] text-slate-400 bg-white/5 px-1.5 py-0.2 rounded font-mono shrink-0">
+                  <span
+                    className="max-w-[45%] text-[10px] text-slate-400 bg-white/5 px-1.5 py-0.2 rounded font-mono shrink-0 whitespace-normal break-words line-clamp-2"
+                    title={pin.category}
+                  >
                     {pin.category}
                   </span>
                 </div>

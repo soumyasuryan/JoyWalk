@@ -2,24 +2,24 @@
 
 export default function WellbeingMetricsPanel({
   wellbeingData = {
-    shadedKmWalked: 3.8,
+    shadedKmWalked: 0,
     dailyGoalKm: 5.0,
-    joyMomentsUnlocked: 11,
+    joyMomentsUnlocked: 0,
     joyMomentsGoal: 15,
-    serenityStreakDays: 4,
-    acousticSerenityAvgDb: 47.5,
+    serenityStreakDays: 0,
+    acousticSerenityAvgDb: 0,
     completedWalks: []
   },
   onResetJournal,
   loading = false
 }) {
   const {
-    shadedKmWalked = 3.8,
+    shadedKmWalked = 0,
     dailyGoalKm = 5.0,
-    joyMomentsUnlocked = 11,
+    joyMomentsUnlocked = 0,
     joyMomentsGoal = 15,
-    serenityStreakDays = 4,
-    acousticSerenityAvgDb = 47.5,
+    serenityStreakDays = 0,
+    acousticSerenityAvgDb = 0,
     completedWalks = []
   } = wellbeingData || {};
 

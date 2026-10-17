@@ -8,6 +8,7 @@ export default function MetricsPanel({
   compareMode = false,
   comparisonResult = null,
   loadingCompare = false,
+  loadingCommit = false,
   onCommitRoute,
   onSelectMode
 }) {
@@ -220,6 +221,15 @@ export default function MetricsPanel({
 
   const canopyTier = getCanopyBadge(avgCanopyIndex);
   const noiseTier = getNoiseBadge(avgNoiseDb);
+  const fastest = comparisonResult?.fastest;
+  const roundDelta = (value, digits = 1) =>
+    Number((value || 0).toFixed(digits));
+  const formatDelta = (value, digits = 1) => {
+    const rounded = roundDelta(value, digits);
+    return `${rounded > 0 ? '+' : ''}${rounded}`;
+  };
+  const selectedModeLabel =
+    mode === 'fastest' ? 'Fastest Walk' : mode === 'shade-seeker' ? 'Shade Seeker' : 'Scenic Drift';
 
   return (
     <div className="prod-card p-5 flex flex-col gap-4 text-slate-100">
@@ -257,19 +267,77 @@ export default function MetricsPanel({
             <button
               type="button"
               onClick={onCommitRoute}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-3.5 py-2.5 rounded-xl transition-all cursor-pointer shadow-md"
+              disabled={loadingCommit}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-3.5 py-2.5 rounded-xl transition-all cursor-pointer shadow-md disabled:cursor-wait disabled:opacity-60"
             >
-              Log Walk
+              {loadingCommit ? 'Saving...' : 'Log Walk'}
             </button>
           )}
         </div>
       </div>
 
+      {fastest?.path && (
+        <div className="rounded-xl border border-white/10 bg-[#121f18] p-4">
+          <div className="mb-3">
+            <h3 className="text-xs font-bold text-white">
+              {selectedModeLabel} vs. Fastest Walk
+            </h3>
+            <p className="text-[10px] text-slate-500">Difference from the shortest-distance route</p>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div>
+              <div className="text-[10px] text-slate-500">Extra time</div>
+              <div className={`text-sm font-mono font-semibold ${estimatedWalkingMinutes > fastest.estimatedWalkingMinutes ? 'text-amber-300' : 'text-emerald-300'}`}>
+                {formatDelta(estimatedWalkingMinutes - fastest.estimatedWalkingMinutes, 0)} min
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-500">Extra distance</div>
+              <div className={`text-sm font-mono font-semibold ${totalDistance > fastest.totalDistance ? 'text-amber-300' : 'text-emerald-300'}`}>
+                {formatDelta(totalDistance - fastest.totalDistance)} km
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-500">Canopy</div>
+              <div className={`text-sm font-mono font-semibold ${avgCanopyIndex >= fastest.avgCanopyIndex ? 'text-emerald-300' : 'text-amber-300'}`}>
+                {formatDelta(avgCanopyIndex - fastest.avgCanopyIndex)} pp
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-500">Noise</div>
+              <div className={`text-sm font-mono font-semibold ${avgNoiseDb <= fastest.avgNoiseDb ? 'text-emerald-300' : 'text-amber-300'}`}>
+                {formatDelta(avgNoiseDb - fastest.avgNoiseDb)} dB
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-500">Micro-moments</div>
+              <div className={`text-sm font-mono font-semibold ${totalJoyMoments >= fastest.totalJoyMoments ? 'text-emerald-300' : 'text-amber-300'}`}>
+                {formatDelta(totalJoyMoments - fastest.totalJoyMoments, 0)} gems
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {totalDistance > 5 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+          This is a long walk (~{estimatedWalkingMinutes} min). Try a nearby haven for a scenic stroll.
+        </div>
+      )}
+
       {/* 3 Key Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {/* Tree Canopy */}
         <div className="bg-[#121f18] border border-white/10 rounded-xl p-3.5 flex flex-col justify-between">
-          <div className="text-xs font-semibold text-slate-400">Tree Canopy Cover</div>
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-400">
+            <span>Tree Canopy Cover</span>
+            <span
+              className="text-[9px] font-medium text-slate-500"
+              title="Estimated from modelled corridor data."
+            >
+              est.
+            </span>
+          </div>
           <div className="my-1.5">
             <span className="text-2xl font-bold font-mono text-emerald-300">
               {avgCanopyIndex}%
@@ -282,7 +350,15 @@ export default function MetricsPanel({
 
         {/* Acoustic Decibels */}
         <div className="bg-[#121f18] border border-white/10 rounded-xl p-3.5 flex flex-col justify-between">
-          <div className="text-xs font-semibold text-slate-400">Ambient Acoustic Level</div>
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-400">
+            <span>Ambient Acoustic Level</span>
+            <span
+              className="text-[9px] font-medium text-slate-500"
+              title="Estimated from modelled corridor data."
+            >
+              est.
+            </span>
+          </div>
           <div className="my-1.5">
             <span className="text-2xl font-bold font-mono text-teal-300">
               {avgNoiseDb} <span className="text-xs font-normal text-slate-400">dB</span>
@@ -295,7 +371,15 @@ export default function MetricsPanel({
 
         {/* Micro-Moments of Joy */}
         <div className="bg-[#121f18] border border-white/10 rounded-xl p-3.5 flex flex-col justify-between">
-          <div className="text-xs font-semibold text-slate-400">Micro-Moments Unlocked</div>
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-400">
+            <span>Micro-Moments Unlocked</span>
+            <span
+              className="text-[9px] font-medium text-slate-500"
+              title="Estimated from modelled corridor data."
+            >
+              est.
+            </span>
+          </div>
           <div className="my-1.5">
             <span className="text-2xl font-bold font-mono text-amber-300">
               {totalJoyMoments} <span className="text-xs font-normal text-slate-400">gems</span>

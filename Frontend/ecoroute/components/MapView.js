@@ -238,12 +238,7 @@ export default function MapView({
     return Object.values(activeCompareGeometries).filter(Boolean).flat();
   }, [activeCompareGeometries]);
 
-  // Clean, vibrant route color based on mode
-  const getRouteColor = () => {
-    if (mode === 'fastest') return '#2563eb'; // Clean, crisp Royal Blue for fastest
-    if (mode === 'shade-seeker' || mode === 'eco-safe') return '#047857'; // Lush deep forest green
-    return '#10b981'; // Crisp botanical emerald for mood drift
-  };
+  const getRouteColor = () => '#a3e635';
 
   const hasActiveRoute = !compareMode && currentRoute?.path && activeGeometry.length > 1;
   const hasCompareRoutes = compareMode && allCompareCoords.length > 1;
@@ -268,7 +263,7 @@ export default function MapView({
         {/* Official OpenStreetMap: 100% free, public, and requires zero API keys */}
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
           maxZoom={19}
         />
 
@@ -315,14 +310,14 @@ export default function MapView({
         {/* === SINGLE ROUTE: High-definition crisp dual-layer casing (NO HAZY GLOW) === */}
         {hasActiveRoute && (
           <>
-            {/* Layer 1: High-contrast white casing (eliminates haziness and sharpens line against any background) */}
+            {/* Dark casing keeps the bright route distinct on both light and dark map tiles. */}
             <Polyline
               key={`route-casing-${sourceName}-${targetName}-${mode}`}
               positions={activeGeometry}
               pathOptions={{
-                color: '#ffffff',
-                weight: 7.5,
-                opacity: 0.95,
+                color: '#07110d',
+                weight: 8,
+                opacity: 0.9,
                 lineCap: 'round',
                 lineJoin: 'round'
               }}
@@ -333,7 +328,7 @@ export default function MapView({
               positions={activeGeometry}
               pathOptions={{
                 color: getRouteColor(),
-                weight: 4.8,
+                weight: 5,
                 opacity: 1,
                 lineCap: 'round',
                 lineJoin: 'round'
@@ -477,7 +472,7 @@ export default function MapView({
         </div>
         {hasActiveRoute && (
           <div className="pl-2 border-l border-white/10 flex items-center gap-1.5">
-            <span className="text-emerald-400 font-semibold font-mono text-[11px]">
+            <span className="text-lime-200 font-semibold font-mono text-[11px]">
               {currentRoute.totalDistance} km · {currentRoute.estimatedWalkingMinutes} min
             </span>
           </div>

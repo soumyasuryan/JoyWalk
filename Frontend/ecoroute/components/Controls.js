@@ -167,7 +167,9 @@ export default function Controls({
       <div className="pt-2 border-t border-white/10">
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-semibold text-slate-300">Walk Vibe &amp; Mood</span>
-          <span className="text-[11px] font-mono text-emerald-400 font-semibold">{mood}</span>
+          <span className="text-[11px] font-mono text-emerald-400 font-semibold">
+            {MOODS.find((option) => option.id === mood)?.label || mood}
+          </span>
         </div>
         <div className="grid grid-cols-2 gap-2">
           {MOODS.map((m) => {
@@ -184,7 +186,10 @@ export default function Controls({
                 }`}
               >
                 <div className="text-xs font-semibold text-white">{m.label}</div>
-                <div className="text-[10px] text-slate-400 leading-tight line-clamp-1">
+                <div
+                  className="text-[10px] text-slate-400 leading-tight line-clamp-2"
+                  title={m.tagline}
+                >
                   {m.tagline}
                 </div>
               </button>
@@ -270,7 +275,7 @@ export default function Controls({
       </div>
 
       {/* Primary Action Button */}
-      <div className="pt-1">
+      <div className="sticky bottom-0 z-20 -mx-5 -mb-5 bg-[#0f1813]/95 px-5 pb-5 pt-3 backdrop-blur">
         {compareMode ? (
           <button
             type="button"

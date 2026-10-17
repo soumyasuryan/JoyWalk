@@ -4,7 +4,11 @@ import path from 'path';
 
 const pairs = [
   { label: 'Lodhi -> Sunder Nursery', from: 'Lodhi Art District & Gardens', to: 'Sunder Nursery Heritage Park' },
-  { label: 'Civil Lines -> Northern Ridge', from: 'Civil Lines', to: 'Model Town' },
+  {
+    label: "Civil Lines -> Model Town (stand-in for the 'Northern Ridge' preset)",
+    from: 'Civil Lines',
+    to: 'Model Town'
+  },
   { label: 'Chanakyapuri -> Hauz Khas', from: 'Chanakyapuri', to: 'Hauz Khas' },
   { label: 'Gurgaon Cyber Green Promenade -> Connaught Place', from: 'Gurgaon Cyber Green Promenade', to: 'Connaught Place' }
 ];
