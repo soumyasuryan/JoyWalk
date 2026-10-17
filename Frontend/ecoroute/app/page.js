@@ -48,8 +48,8 @@ export default function JoyWalkDashboard() {
   const [wellbeingData, setWellbeingData] = useState(EMPTY_WELLBEING_JOURNAL);
 
   // --- Route Inputs ---
-  const [source, setSource] = useState('Lodhi Art District & Gardens');
-  const [target, setTarget] = useState('Sunder Nursery Heritage Park');
+  const [source, setSource] = useState('Gurgaon Cyber Green Promenade');
+  const [target, setTarget] = useState('Connaught Place');
   const [mode, setMode] = useState('mood-calibrated');
   const [mood, setMood] = useState('Reflective');
   const [serenityWeight, setSerenityWeight] = useState(1.0);
@@ -268,10 +268,10 @@ export default function JoyWalkDashboard() {
       ]);
 
       if (isMounted && nodes.length > 0) {
-        const lodhiNode = nodes.find((n) => n.name.includes('Lodhi'));
-        const sunderNode = nodes.find((n) => n.name.includes('Sunder'));
-        if (lodhiNode) setSource(lodhiNode.name);
-        if (sunderNode) setTarget(sunderNode.name);
+        const defaultSource = nodes.find((n) => n.name === 'Gurgaon Cyber Green Promenade');
+        const defaultTarget = nodes.find((n) => n.name === 'Connaught Place');
+        if (defaultSource) setSource(defaultSource.name);
+        if (defaultTarget) setTarget(defaultTarget.name);
       }
 
       if (isMounted) setInitialLoading(false);

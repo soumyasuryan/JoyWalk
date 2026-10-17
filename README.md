@@ -30,7 +30,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The dashboard loads a short Lodhi Gardens → Sunder Nursery walk so you can explore the experience right away.
+Open [http://localhost:3000](http://localhost:3000). The dashboard loads a Gurgaon Cyber Green Promenade → Connaught Place walk so you can explore the experience right away.
 
 ### Production build
 
