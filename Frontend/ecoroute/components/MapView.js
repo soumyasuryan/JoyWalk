@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo, useCallback, useSyncExternalStore } from 'react';
+import { useEffect, useState, useMemo, useSyncExternalStore } from 'react';
 import {
   MapContainer,
   TileLayer,
@@ -12,10 +12,57 @@ import {
 } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
-// In-memory cache for fetched road geometries
+// In-memory cache for fetched physical road geometries
 const roadGeometryCache = new Map();
 
-// Idiomatic client hydration detector for React 19
+// Helper to fetch actual road and avenue coordinates connecting path checkpoints
+async function fetchSnappedRoadGeometry(path, coordMap) {
+  if (!path || path.length < 2) return null;
+  const key = path.join('->');
+  if (roadGeometryCache.has(key)) return roadGeometryCache.get(key);
+
+  const coords = path.map((name) => coordMap.get(name)).filter(Boolean);
+  if (coords.length < 2) return null;
+
+  const coordsStr = coords.map(([lat, lon]) => `${lon},${lat}`).join(';');
+
+  // 1. Try pedestrian foot network (sidewalks, pedestrian avenues, trails)
+  try {
+    const footUrl = `https://router.project-osrm.org/route/v1/foot/${coordsStr}?overview=full&geometries=geojson`;
+    const res = await fetch(footUrl, { signal: AbortSignal.timeout(3500) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.code === 'Ok' && data.routes?.[0]?.geometry?.coordinates?.length > 1) {
+        const roadPoints = data.routes[0].geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+        roadGeometryCache.set(key, roadPoints);
+        return roadPoints;
+      }
+    }
+  } catch {
+    // Try driving network fallback
+  }
+
+  // 2. Fallback to driving road network
+  try {
+    const driveUrl = `https://router.project-osrm.org/route/v1/driving/${coordsStr}?overview=full&geometries=geojson`;
+    const res = await fetch(driveUrl, { signal: AbortSignal.timeout(3500) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.code === 'Ok' && data.routes?.[0]?.geometry?.coordinates?.length > 1) {
+        const roadPoints = data.routes[0].geometry.coordinates.map(([lon, lat]) => [lat, lon]);
+        roadGeometryCache.set(key, roadPoints);
+        return roadPoints;
+      }
+    }
+  } catch {
+    // Fallback to straight coords
+  }
+
+  roadGeometryCache.set(key, coords);
+  return coords;
+}
+
+// Hydration detector for React 19
 const emptySubscribe = () => () => {};
 function useIsClient() {
   return useSyncExternalStore(
@@ -25,13 +72,13 @@ function useIsClient() {
   );
 }
 
-// Helper to auto-fit map view to all route bounds
+// Auto-fit map to route bounds
 function RouteBounds({ routeCoords }) {
   const map = useMap();
   useEffect(() => {
     if (routeCoords && routeCoords.length > 1) {
       try {
-        map.fitBounds(routeCoords, { padding: [50, 50], maxZoom: 13 });
+        map.fitBounds(routeCoords, { padding: [60, 60], maxZoom: 14 });
       } catch (e) {
         // Map instance not ready
       }
@@ -40,14 +87,14 @@ function RouteBounds({ routeCoords }) {
   return null;
 }
 
-// Fit map to encompass multiple route sets
+// Auto-fit map to multiple routes
 function MultiRouteBounds({ allCoords }) {
   const map = useMap();
   useEffect(() => {
     const flat = allCoords.filter(Boolean).flat();
     if (flat.length > 1) {
       try {
-        map.fitBounds(flat, { padding: [50, 50], maxZoom: 13 });
+        map.fitBounds(flat, { padding: [60, 60], maxZoom: 14 });
       } catch (e) {
         // Map instance not ready
       }
@@ -56,23 +103,23 @@ function MultiRouteBounds({ allCoords }) {
   return null;
 }
 
-// Compare mode polyline colors & styles
+// Compare mode polyline styling (crisp, high-contrast, distinct)
 const COMPARE_STYLES = {
-  fastest: { color: '#ef4444', weight: 4.5, dashArray: null, label: 'Fastest' },
-  ecoSafe: { color: '#10b981', weight: 4.5, dashArray: null, label: 'Eco-Safe' },
-  riskWeighted: { color: '#8b5cf6', weight: 4.5, dashArray: '6 4', label: 'Risk-Calibrated' }
+  fastest: { color: '#2563eb', casingColor: '#ffffff', weight: 4.5, dashArray: '6 6', label: 'Fastest Direct Walk' },
+  shadeSeeker: { color: '#047857', casingColor: '#ffffff', weight: 5.0, dashArray: null, label: 'Shade Seeker (>70% Canopy)' },
+  moodCalibrated: { color: '#d97706', casingColor: '#ffffff', weight: 5.0, dashArray: null, label: 'Serenity & Joy Drift' }
 };
 
 export default function MapView({
   neighborhoods = [],
-  roads = [],
   currentRoute = null,
   source = '',
   target = '',
-  mode = 'fastest',
-  // Compare mode
+  mode = 'mood-calibrated',
   compareMode = false,
-  comparisonResult = null
+  comparisonResult = null,
+  joyPins = [],
+  selectedPin = null
 }) {
   const isClient = useIsClient();
   const delhiCenter = [28.6139, 77.2090];
@@ -88,446 +135,362 @@ export default function MapView({
 
   const sourceName = source || currentRoute?.path?.[0] || '';
   const targetName = target || currentRoute?.path?.[currentRoute?.path?.length - 1] || '';
-  const sourceCoord = coordMap.get(sourceName);
-  const targetCoord = coordMap.get(targetName);
 
-  // Single route geometry state
-  const [singleRoadCoords, setSingleRoadCoords] = useState([]);
+  // Single-route road-snapped coordinates state
+  const [singleRoadCoords, setSingleRoadCoords] = useState(null);
 
-  // Compare mode geometries state
-  const [compareRoadGeometries, setCompareRoadGeometries] = useState({
+  // Compare mode road-snapped coordinates state
+  const [compareRoadCoords, setCompareRoadCoords] = useState({
     fastest: null,
-    ecoSafe: null,
-    riskWeighted: null
+    shadeSeeker: null,
+    moodCalibrated: null
   });
 
-  // Helper to fetch and stitch real road geometries for a graph path
-  const fetchPathRoadGeometry = useCallback(
-    async (pathNodes) => {
-      if (!pathNodes || pathNodes.length < 2) return [];
-
-      const coords = pathNodes.map((name) => coordMap.get(name)).filter(Boolean);
-      if (coords.length < 2) return coords;
-
-      const fullRoadPoints = [];
-
-      for (let i = 0; i < coords.length - 1; i++) {
-        const c1 = coords[i];
-        const c2 = coords[i + 1];
-        const legKey = `leg-${c1[0].toFixed(4)},${c1[1].toFixed(4)}->${c2[0].toFixed(4)},${c2[1].toFixed(4)}`;
-
-        if (roadGeometryCache.has(legKey)) {
-          const cachedLeg = roadGeometryCache.get(legKey);
-          if (i === 0) {
-            fullRoadPoints.push(...cachedLeg);
-          } else {
-            fullRoadPoints.push(...cachedLeg.slice(1));
-          }
-          continue;
-        }
-
-        try {
-          const url = `https://router.project-osrm.org/route/v1/driving/${c1[1]},${c1[0]};${c2[1]},${c2[0]}?overview=full&geometries=geojson`;
-          const res = await fetch(url);
-          const data = await res.json();
-
-          if (data.code === 'Ok' && data.routes?.[0]?.geometry?.coordinates) {
-            const legCoords = data.routes[0].geometry.coordinates.map(([lon, lat]) => [lat, lon]);
-            roadGeometryCache.set(legKey, legCoords);
-            if (i === 0) {
-              fullRoadPoints.push(...legCoords);
-            } else {
-              fullRoadPoints.push(...legCoords.slice(1));
-            }
-          } else {
-            const fallbackLeg = [c1, c2];
-            roadGeometryCache.set(legKey, fallbackLeg);
-            if (i === 0) {
-              fullRoadPoints.push(...fallbackLeg);
-            } else {
-              fullRoadPoints.push(...fallbackLeg.slice(1));
-            }
-          }
-        } catch {
-          const fallbackLeg = [c1, c2];
-          if (i === 0) {
-            fullRoadPoints.push(...fallbackLeg);
-          } else {
-            fullRoadPoints.push(...fallbackLeg.slice(1));
-          }
-        }
-      }
-
-      return fullRoadPoints;
-    },
-    [coordMap]
-  );
-
-  // 1. Single-Route Mode: fetch road geometry along graph computed path
+  // Fetch physical road coordinates along computed path
   useEffect(() => {
     if (compareMode || !currentRoute?.path || currentRoute.path.length < 2) {
-      setSingleRoadCoords([]);
+      setSingleRoadCoords(null);
       return;
     }
-
-    let isCancelled = false;
-    const pathKey = `single-path-${currentRoute.path.join('->')}`;
+    let isMounted = true;
+    const pathKey = currentRoute.path.join('->');
 
     if (roadGeometryCache.has(pathKey)) {
       setSingleRoadCoords(roadGeometryCache.get(pathKey));
       return;
     }
 
-    fetchPathRoadGeometry(currentRoute.path).then((pts) => {
-      if (!isCancelled && pts && pts.length > 0) {
-        roadGeometryCache.set(pathKey, pts);
+    fetchSnappedRoadGeometry(currentRoute.path, coordMap).then((pts) => {
+      if (isMounted && pts && pts.length > 1) {
         setSingleRoadCoords(pts);
       }
     });
 
     return () => {
-      isCancelled = true;
+      isMounted = false;
     };
-  }, [compareMode, currentRoute?.path, fetchPathRoadGeometry]);
+  }, [compareMode, currentRoute?.path, coordMap]);
 
-  // 2. Compare Mode: fetch road geometry for each of the 3 distinct graph paths
+  // Fetch physical road coordinates for tri-mode comparison
   useEffect(() => {
     if (!compareMode || !comparisonResult) {
-      setCompareRoadGeometries({ fastest: null, ecoSafe: null, riskWeighted: null });
+      setCompareRoadCoords({ fastest: null, shadeSeeker: null, moodCalibrated: null });
       return;
     }
+    let isMounted = true;
+    const shadeData = comparisonResult.shadeSeeker || comparisonResult.ecoSafe;
+    const moodData = comparisonResult.moodCalibrated || comparisonResult.riskWeighted;
 
-    let isCancelled = false;
     const modes = [
-      { key: 'fastest', data: comparisonResult.fastest },
-      { key: 'ecoSafe', data: comparisonResult.ecoSafe },
-      { key: 'riskWeighted', data: comparisonResult.riskWeighted }
+      { key: 'fastest', path: comparisonResult.fastest?.path },
+      { key: 'shadeSeeker', path: shadeData?.path },
+      { key: 'moodCalibrated', path: moodData?.path }
     ];
 
-    modes.forEach(({ key, data }) => {
-      if (!data?.path || data.path.length < 2) {
-        if (!isCancelled) {
-          setCompareRoadGeometries((prev) => ({ ...prev, [key]: null }));
-        }
-        return;
-      }
-
-      const pathKey = `compare-path-${key}-${data.path.join('->')}`;
-
+    modes.forEach(({ key, path }) => {
+      if (!path || path.length < 2) return;
+      const pathKey = path.join('->');
       if (roadGeometryCache.has(pathKey)) {
-        if (!isCancelled) {
-          setCompareRoadGeometries((prev) => ({
-            ...prev,
-            [key]: roadGeometryCache.get(pathKey)
-          }));
+        if (isMounted) {
+          setCompareRoadCoords((prev) => ({ ...prev, [key]: roadGeometryCache.get(pathKey) }));
         }
         return;
       }
 
-      fetchPathRoadGeometry(data.path).then((pts) => {
-        if (!isCancelled && pts && pts.length > 0) {
-          roadGeometryCache.set(pathKey, pts);
-          setCompareRoadGeometries((prev) => ({
-            ...prev,
-            [key]: pts
-          }));
+      fetchSnappedRoadGeometry(path, coordMap).then((pts) => {
+        if (isMounted && pts && pts.length > 1) {
+          setCompareRoadCoords((prev) => ({ ...prev, [key]: pts }));
         }
       });
     });
 
     return () => {
-      isCancelled = true;
+      isMounted = false;
     };
-  }, [compareMode, comparisonResult, fetchPathRoadGeometry]);
+  }, [compareMode, comparisonResult, coordMap]);
 
-  // Active single-route geometry
+  // Active single-route geometry: physical road coordinates with instant waypoint fallback
   const activeGeometry = useMemo(() => {
-    if (singleRoadCoords.length > 0) return singleRoadCoords;
+    if (singleRoadCoords && singleRoadCoords.length > 1) return singleRoadCoords;
     if (currentRoute?.path && currentRoute.path.length > 1) {
       return currentRoute.path.map((name) => coordMap.get(name)).filter(Boolean);
     }
     return [];
   }, [singleRoadCoords, currentRoute?.path, coordMap]);
 
-  // Compare mode active geometries
+  // Active compare-mode geometries: physical road coordinates with instant waypoint fallback
   const activeCompareGeometries = useMemo(() => {
     if (!compareMode || !comparisonResult) return {};
-    const fallbackPathCoords = (path) =>
+    const toFallbackCoords = (path) =>
       path && path.length > 1 ? path.map((name) => coordMap.get(name)).filter(Boolean) : null;
 
+    const shadeData = comparisonResult.shadeSeeker || comparisonResult.ecoSafe;
+    const moodData = comparisonResult.moodCalibrated || comparisonResult.riskWeighted;
+
     return {
-      fastest: compareRoadGeometries.fastest || fallbackPathCoords(comparisonResult.fastest?.path),
-      ecoSafe: compareRoadGeometries.ecoSafe || fallbackPathCoords(comparisonResult.ecoSafe?.path),
-      riskWeighted: compareRoadGeometries.riskWeighted || fallbackPathCoords(comparisonResult.riskWeighted?.path)
+      fastest: compareRoadCoords.fastest || toFallbackCoords(comparisonResult.fastest?.path),
+      shadeSeeker: compareRoadCoords.shadeSeeker || toFallbackCoords(shadeData?.path),
+      moodCalibrated: compareRoadCoords.moodCalibrated || toFallbackCoords(moodData?.path)
     };
-  }, [compareMode, comparisonResult, compareRoadGeometries, coordMap]);
+  }, [compareMode, comparisonResult, compareRoadCoords, coordMap]);
 
   const allCompareCoords = useMemo(() => {
     return Object.values(activeCompareGeometries).filter(Boolean).flat();
   }, [activeCompareGeometries]);
 
-  // Which nodes are on any compare route
-  const compareRouteNodes = useMemo(() => {
-    if (!compareMode || !comparisonResult) return new Set();
-    const s = new Set();
-    ['fastest', 'ecoSafe', 'riskWeighted'].forEach((k) => {
-      const data = comparisonResult[k];
-      data?.path?.forEach((n) => s.add(n));
-    });
-    return s;
-  }, [compareMode, comparisonResult]);
-
-  // AQI color palette
-  const getAqiColor = (aqi) => {
-    if (aqi < 200) return '#10b981';
-    if (aqi <= 400) return '#f59e0b';
-    return '#ef4444';
+  // Clean, vibrant route color based on mode
+  const getRouteColor = () => {
+    if (mode === 'fastest') return '#2563eb'; // Clean, crisp Royal Blue for fastest
+    if (mode === 'shade-seeker' || mode === 'eco-safe') return '#047857'; // Lush deep forest green
+    return '#10b981'; // Crisp botanical emerald for mood drift
   };
 
-  const getAqiInfo = (aqi) => {
-    if (aqi < 200) return { label: 'Normal (<200)', color: '#10b981' };
-    if (aqi <= 400) return { label: 'Elevated (200-400)', color: '#f59e0b' };
-    return { label: 'Severe (>400)', color: '#ef4444' };
-  };
+  const hasActiveRoute = !compareMode && currentRoute?.path && activeGeometry.length > 1;
+  const hasCompareRoutes = compareMode && allCompareCoords.length > 1;
 
   if (!isClient) {
     return (
-      <div className="w-full h-full min-h-[500px] bg-slate-900 border border-slate-800 rounded-lg flex items-center justify-center text-slate-400 text-xs font-mono">
-        Loading Delhi NCR Spatial Network...
+      <div className="w-full h-full min-h-[580px] lg:h-[640px] bg-[#0c1611] rounded-2xl flex items-center justify-center text-emerald-400/80 text-sm font-medium">
+        Loading Delhi NCR Map Canvas...
       </div>
     );
   }
 
   return (
-    <div className="relative w-full h-[500px] rounded-lg overflow-hidden border border-slate-700/80 shadow-xl bg-slate-100">
+    <div className="relative w-full h-[580px] lg:h-[640px] rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-[#0c1611]">
       <MapContainer
         center={delhiCenter}
-        zoom={11}
+        zoom={12}
         scrollWheelZoom={true}
         className="w-full h-full z-0"
-        style={{ height: '100%', width: '100%', background: '#ffffff' }}
+        style={{ height: '100%', width: '100%', background: '#f2f5f3' }}
       >
-        {/* Bright, high-clarity OpenStreetMap tiles */}
+        {/* Official OpenStreetMap: 100% free, public, and requires zero API keys */}
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           maxZoom={19}
         />
 
-        {/* Faint network road connections */}
-        {roads.map((road, idx) => {
-          const c1 = coordMap.get(road.source);
-          const c2 = coordMap.get(road.target);
-          if (!c1 || !c2) return null;
-          return (
-            <Polyline
-              key={`road-${road.source}-${road.target}-${idx}`}
-              positions={[c1, c2]}
-              pathOptions={{
-                color: '#64748b',
-                weight: 1.2,
-                opacity: 0.3,
-                dashArray: '3, 5'
-              }}
-            />
-          );
-        })}
-
-        {/* === COMPARE MODE: 3 polylines === */}
-        {compareMode && (
+        {/* === COMPARE MODE: 3 routes displayed simultaneously with crisp casing === */}
+        {hasCompareRoutes && (
           <>
             {Object.entries(activeCompareGeometries).map(([key, coords]) => {
               if (!coords || coords.length < 2) return null;
-              const style = COMPARE_STYLES[key] || { color: '#3b82f6', weight: 4 };
+              const style = COMPARE_STYLES[key] || { color: '#10b981', weight: 4.5 };
               return (
-                <Polyline
-                  key={`compare-${key}`}
-                  positions={coords}
-                  pathOptions={{
-                    color: style.color,
-                    weight: style.weight || (key === 'fastest' ? 3.5 : 4.5),
-                    opacity: 0.9,
-                    dashArray: style.dashArray
-                  }}
-                />
+                <div key={`compare-group-${key}`}>
+                  {/* Outer crisp white casing */}
+                  <Polyline
+                    key={`compare-casing-${key}`}
+                    positions={coords}
+                    pathOptions={{
+                      color: '#ffffff',
+                      weight: style.weight + 3,
+                      opacity: 0.95,
+                      lineCap: 'round',
+                      lineJoin: 'round'
+                    }}
+                  />
+                  {/* Core colorful route line */}
+                  <Polyline
+                    key={`compare-core-${key}`}
+                    positions={coords}
+                    pathOptions={{
+                      color: style.color,
+                      weight: style.weight,
+                      opacity: 1,
+                      dashArray: style.dashArray,
+                      lineCap: 'round',
+                      lineJoin: 'round'
+                    }}
+                  />
+                </div>
               );
             })}
-            {allCompareCoords.length > 1 && (
-              <MultiRouteBounds allCoords={[allCompareCoords]} />
-            )}
+            <MultiRouteBounds allCoords={[allCompareCoords]} />
           </>
         )}
 
-        {/* === SINGLE ROUTE MODE === */}
-        {!compareMode && currentRoute?.path && activeGeometry.length > 1 && (
+        {/* === SINGLE ROUTE: High-definition crisp dual-layer casing (NO HAZY GLOW) === */}
+        {hasActiveRoute && (
           <>
+            {/* Layer 1: High-contrast white casing (eliminates haziness and sharpens line against any background) */}
             <Polyline
-              key={`route-glow-${sourceName}-${targetName}-${mode}`}
+              key={`route-casing-${sourceName}-${targetName}-${mode}`}
               positions={activeGeometry}
               pathOptions={{
-                color: '#3b82f6',
-                weight: 8,
-                opacity: 0.35
+                color: '#ffffff',
+                weight: 7.5,
+                opacity: 0.95,
+                lineCap: 'round',
+                lineJoin: 'round'
               }}
             />
+            {/* Layer 2: Core solid, vibrant route line */}
             <Polyline
-              key={`route-active-${sourceName}-${targetName}-${mode}`}
+              key={`route-core-${sourceName}-${targetName}-${mode}`}
               positions={activeGeometry}
               pathOptions={{
-                color: '#2563eb',
-                weight: 4.5,
-                opacity: 0.95
+                color: getRouteColor(),
+                weight: 4.8,
+                opacity: 1,
+                lineCap: 'round',
+                lineJoin: 'round'
               }}
             />
             <RouteBounds routeCoords={activeGeometry} />
           </>
         )}
 
-        {/* Neighborhood / Warehouse Markers */}
-        {neighborhoods.map((node) => {
-          const color = getAqiColor(node.aqi);
-          const { label } = getAqiInfo(node.aqi);
-          const isWarehouse = node.isWarehouse;
-          const isSelectedSource = sourceName === node.name;
-          const isSelectedTarget = targetName === node.name;
-          const isOnRoute = compareMode
-            ? compareRouteNodes.has(node.name)
-            : currentRoute?.path?.includes(node.name);
-          const isHazardous = node.aqi > 400;
-
-          const radius = isWarehouse ? 9.5 : isSelectedSource || isSelectedTarget ? 8.5 : 7;
-
+        {/* Community Pocket of Joy Pins */}
+        {joyPins.map((pin) => {
+          const isSelected = selectedPin?.id === pin.id;
           return (
-            <div key={node.name}>
-              {/* Pulsing ring for hazardous stations */}
-              {isHazardous && (
-                <CircleMarker
-                  center={[node.lat, node.lon]}
-                  radius={radius + 6}
-                  pathOptions={{
-                    color: '#ef4444',
-                    weight: 1.2,
-                    opacity: 0.6,
-                    fillColor: '#ef4444',
-                    fillOpacity: 0.08,
-                    dashArray: '2, 4'
-                  }}
-                />
-              )}
-
-              <CircleMarker
-                center={[node.lat, node.lon]}
-                radius={radius}
-                pathOptions={{
-                  color: isWarehouse ? '#1e293b' : '#ffffff',
-                  weight: isWarehouse ? 2.5 : 1.8,
-                  fillColor: color,
-                  fillOpacity: 0.95
-                }}
-              >
-                <Tooltip direction="top" offset={[0, -6]} opacity={0.95}>
-                  <div className="text-xs text-slate-900 font-semibold">
-                    {node.name} {isWarehouse && '🏭 (Warehouse)'}
-                    <span className="block text-[11px] font-normal text-slate-600">
-                      AQI: <strong>{node.aqi}</strong> — {label}
+            <CircleMarker
+              key={pin.id}
+              center={[pin.lat, pin.lon]}
+              radius={isSelected ? 9 : 6.5}
+              pathOptions={{
+                color: '#ffffff',
+                weight: 1.8,
+                fillColor: '#f59e0b',
+                fillOpacity: 0.95
+              }}
+            >
+              <Tooltip direction="top" offset={[0, -6]}>
+                <div className="text-xs font-semibold text-slate-900">
+                  {pin.title}
+                  <span className="block text-[10px] text-slate-600 font-normal">
+                    {pin.category} · {pin.neighborhood}
+                  </span>
+                </div>
+              </Tooltip>
+              <Popup>
+                <div className="space-y-1.5 p-1 text-xs">
+                  <div className="font-bold text-amber-300 text-sm">{pin.title}</div>
+                  <div className="text-[11px] text-emerald-400 font-medium">
+                    {pin.category} · 📍 {pin.neighborhood}
+                  </div>
+                  <p className="text-slate-200 text-xs leading-relaxed pt-1">
+                    {pin.description}
+                  </p>
+                  <div className="pt-2 border-t border-white/10 flex justify-between items-center text-[10px] text-slate-400">
+                    <span>Added by {pin.author || 'Local Walker'}</span>
+                    <span className="text-amber-400 font-semibold font-mono">
+                      💛 {pin.likes || 1} likes
                     </span>
                   </div>
-                </Tooltip>
+                </div>
+              </Popup>
+            </CircleMarker>
+          );
+        })}
 
-                <Popup>
-                  <div className="text-slate-100 text-xs min-w-[180px] space-y-1.5 p-1">
-                    <div className="flex items-center justify-between pb-1.5 border-b border-slate-700/80">
-                      <span className="font-bold text-sm text-white">{node.name}</span>
-                      {isWarehouse && (
-                        <span className="text-[10px] font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/30 px-1.5 py-0.5 rounded">
-                          Warehouse
-                        </span>
-                      )}
-                    </div>
+        {/* Delhi NCR Spatial Haven Nodes (Clean, crisp markers) */}
+        {neighborhoods.map((node) => {
+          const isSource = sourceName === node.name;
+          const isTarget = targetName === node.name;
+          const isPromenade = node.isPromenade || node.isWarehouse;
 
-                    <div className="flex items-center justify-between py-0.5">
-                      <span className="text-slate-400 font-medium">AQI Index:</span>
-                      <span className="font-mono font-bold text-white text-sm">{node.aqi}</span>
-                    </div>
+          const fillColor = isSource
+            ? '#2563eb' // Blue for Start
+            : isTarget
+            ? '#059669' // Emerald for Destination
+            : node.greenCanopyIndex >= 75
+            ? '#10b981'
+            : node.greenCanopyIndex >= 50
+            ? '#34d399'
+            : '#94a3b8';
 
-                    <div className="flex items-center justify-between py-0.5">
-                      <span className="text-slate-400 font-medium">Severity Band:</span>
-                      <span className="font-semibold text-[11px] flex items-center gap-1.5">
-                        <span
-                          className="inline-block w-2 h-2 rounded-full"
-                          style={{ backgroundColor: color }}
-                        />
-                        <span>{label}</span>
+          const radius = isSource || isTarget ? 8.5 : isPromenade ? 6 : 4.5;
+
+          return (
+            <CircleMarker
+              key={node.name}
+              center={[node.lat, node.lon]}
+              radius={radius}
+              pathOptions={{
+                color: isSource || isTarget ? '#ffffff' : 'rgba(255,255,255,0.8)',
+                weight: isSource || isTarget ? 2.5 : 1.2,
+                fillColor,
+                fillOpacity: isSource || isTarget ? 1 : 0.85
+              }}
+            >
+              <Tooltip direction="top" offset={[0, -6]}>
+                <div className="text-xs font-semibold text-slate-900">
+                  {node.name}
+                  <span className="block text-[10px] text-slate-600 font-normal">
+                    {node.greenCanopyIndex}% Canopy · {node.noiseLevelDb} dB
+                  </span>
+                </div>
+              </Tooltip>
+
+              <Popup>
+                <div className="space-y-1.5 p-1 text-xs min-w-[190px]">
+                  <div className="flex items-center justify-between pb-1 border-b border-white/10">
+                    <span className="font-bold text-sm text-white">{node.name}</span>
+                    {isPromenade && (
+                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-medium">
+                        Promenade
                       </span>
-                    </div>
-
-                    {isSelectedSource && (
-                      <div className="text-[11px] font-semibold text-blue-400 pt-1 border-t border-slate-700/60">
-                        ● Selected Warehouse Origin
-                      </div>
-                    )}
-                    {isSelectedTarget && (
-                      <div className="text-[11px] font-semibold text-emerald-400 pt-1 border-t border-slate-700/60">
-                        ● Selected Customer Drop-off
-                      </div>
-                    )}
-                    {isOnRoute && !isSelectedSource && !isSelectedTarget && (
-                      <div className="text-[11px] font-medium text-slate-300 pt-1 border-t border-slate-700/60">
-                        ➔ Route Checkpoint
-                      </div>
                     )}
                   </div>
-                </Popup>
-              </CircleMarker>
-            </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span>Tree Canopy:</span>
+                    <strong className="text-emerald-300 font-mono">{node.greenCanopyIndex}%</strong>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span>Acoustic Loudness:</span>
+                    <strong className="text-teal-300 font-mono">{node.noiseLevelDb} dB</strong>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span>Micro-Moments:</span>
+                    <strong className="text-amber-300 font-mono">{node.joyMomentDensity} spots</strong>
+                  </div>
+                  {isSource && (
+                    <div className="text-[11px] font-semibold text-blue-400 pt-1 border-t border-white/10">
+                      ● Active Origin Haven (Start)
+                    </div>
+                  )}
+                  {isTarget && (
+                    <div className="text-[11px] font-semibold text-emerald-400 pt-1 border-t border-white/10">
+                      ● Active Destination Haven (End)
+                    </div>
+                  )}
+                </div>
+              </Popup>
+            </CircleMarker>
           );
         })}
       </MapContainer>
 
-      {/* Legend */}
-      <div className="absolute bottom-3 right-3 z-[1000] glass-panel px-3.5 py-2.5 rounded-lg border border-slate-700/80 shadow-2xl text-xs text-slate-200">
-        <div className="font-semibold text-white text-xs pb-1.5 mb-1.5 border-b border-slate-700/60 flex items-center justify-between gap-3">
-          <span>AQI Severity Bands</span>
-          <span className="text-[10px] font-mono text-slate-400">{neighborhoods.length} Stations</span>
+      {/* Floating Status / Legend Bar (Minimalist, Crisp & Non-Intrusive) */}
+      <div className="absolute top-4 right-4 z-[1000] bg-[#0f1813]/92 backdrop-blur-md px-3.5 py-2 rounded-xl border border-white/10 shadow-lg text-xs text-slate-200 flex items-center gap-3">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#10b981]" />
+          <span className="text-[11px] text-slate-300">Lush Canopy</span>
         </div>
-        <div className="space-y-1 text-[11px]">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#10b981] shadow-sm" />
-            <span className="text-slate-200">Normal (&lt;200)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#f59e0b] shadow-sm" />
-            <span className="text-slate-200">Elevated (200-400)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#ef4444] shadow-sm" />
-            <span className="text-slate-200">Severe (&gt;400)</span>
-          </div>
-          <div className="pt-1.5 mt-1.5 border-t border-slate-700/60 flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full border-2 border-slate-300 bg-slate-800" />
-            <span className="text-blue-300 font-medium">Warehouse Hub</span>
-          </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#f59e0b]" />
+          <span className="text-[11px] text-slate-300">Joy Pin</span>
         </div>
-
-        {/* Compare mode route legend */}
-        {compareMode && comparisonResult && (
-          <div className="pt-1.5 mt-1.5 border-t border-slate-700/60 space-y-1">
-            {Object.entries(COMPARE_STYLES).map(([key, style]) => (
-              <div key={key} className="flex items-center gap-2">
-                <svg width="16" height="8" className="shrink-0">
-                  <line
-                    x1="0" y1="4" x2="16" y2="4"
-                    stroke={style.color}
-                    strokeWidth="2"
-                    strokeDasharray={style.dashArray || ''}
-                  />
-                </svg>
-                <span className="text-slate-300">{style.label}</span>
-              </div>
-            ))}
+        {hasActiveRoute && (
+          <div className="pl-2 border-l border-white/10 flex items-center gap-1.5">
+            <span className="text-emerald-400 font-semibold font-mono text-[11px]">
+              {currentRoute.totalDistance} km · {currentRoute.estimatedWalkingMinutes} min
+            </span>
           </div>
         )}
       </div>
+
+      {/* When no route is computed yet: Clean helper prompt */}
+      {!hasActiveRoute && !hasCompareRoutes && (
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-[1000] bg-[#0f1813]/92 backdrop-blur-md px-4 py-2.5 rounded-full border border-white/10 shadow-2xl text-xs text-slate-200 pointer-events-none flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span>Type or select an origin and destination to view your scenic drift route</span>
+        </div>
+      )}
     </div>
   );
 }

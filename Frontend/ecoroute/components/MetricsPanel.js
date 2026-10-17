@@ -1,61 +1,39 @@
 'use client';
 
-import { useMemo } from 'react';
-
 export default function MetricsPanel({
   currentRoute = null,
   neighborhoods = [],
-  mode = 'fastest',
+  mode = 'mood-calibrated',
   loading = false,
-  // Compare mode props
   compareMode = false,
   comparisonResult = null,
-  loadingCompare = false
+  loadingCompare = false,
+  onCommitRoute,
+  onSelectMode
 }) {
-  // AQI lookup map
-  const aqiMap = useMemo(() => {
-    return new Map(neighborhoods.map((n) => [n.name, n.aqi]));
-  }, [neighborhoods]);
+  const getCanopyBadge = (canopy) => {
+    if (canopy >= 80) return { label: 'Lush Forest Canopy', badgeClass: 'bg-emerald-950/80 text-emerald-300 border-emerald-700/60' };
+    if (canopy >= 65) return { label: 'Shaded Green Corridor', badgeClass: 'bg-teal-950/80 text-teal-300 border-teal-700/60' };
+    if (canopy >= 45) return { label: 'Moderate Tree Cover', badgeClass: 'bg-amber-950/80 text-amber-300 border-amber-700/60' };
+    return { label: 'Exposed to Sun', badgeClass: 'bg-rose-950/80 text-rose-300 border-rose-700/60' };
+  };
 
-  const calculatedAqiExposure = useMemo(() => {
-    if (currentRoute?.totalAqiExposure != null) {
-      return currentRoute.totalAqiExposure;
-    }
-    if (!currentRoute?.path || currentRoute.path.length === 0) return 0;
-    return currentRoute.path.reduce((sum, name) => sum + (aqiMap.get(name) || 0), 0);
-  }, [currentRoute, aqiMap]);
-
-  const calculatedHazardPay = useMemo(() => {
-    if (currentRoute?.hazardPay != null) {
-      return Number(currentRoute.hazardPay);
-    }
-    if (calculatedAqiExposure == null || !currentRoute?.totalDistance) return 0;
-    const pathLen = currentRoute.path ? currentRoute.path.length : 1;
-    const avgAqi = calculatedAqiExposure / pathLen;
-    const distanceComponent = (currentRoute.totalDistance || 0) * 1.5;
-    const smogSurcharge = Math.max(0, avgAqi - 150) * 0.1;
-    return Math.round((distanceComponent + smogSurcharge) * 100) / 100;
-  }, [currentRoute, calculatedAqiExposure]);
-
-  const calculatedBypassed = useMemo(() => {
-    if (currentRoute?.bypassedCount != null && currentRoute.bypassedCount > 0) {
-      return currentRoute.bypassedCount;
-    }
-    if (mode === 'eco-safe') {
-      return neighborhoods.filter((n) => n.aqi > 400 && !n.isWarehouse).length;
-    }
-    return 0;
-  }, [currentRoute, mode, neighborhoods]);
+  const getNoiseBadge = (db) => {
+    if (db <= 46) return { label: 'Quiet Whisper (<46 dB)', textClass: 'text-emerald-400' };
+    if (db <= 55) return { label: 'Gentle Park Murmur (47-55 dB)', textClass: 'text-teal-400' };
+    if (db <= 65) return { label: 'Suburban Ambient (56-65 dB)', textClass: 'text-amber-400' };
+    return { label: 'Urban Traffic (>65 dB)', textClass: 'text-rose-400' };
+  };
 
   // --- COMPARE MODE ---
   if (compareMode) {
     if (loadingCompare) {
       return (
-        <div className="glass-panel rounded-lg p-4 animate-pulse">
-          <div className="h-4 w-32 bg-slate-700/60 rounded mb-4" />
-          <div className="space-y-2">
+        <div className="prod-card p-5 animate-pulse">
+          <div className="h-4 w-48 bg-emerald-950/80 rounded mb-4" />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="h-10 bg-slate-800/60 rounded-lg" />
+              <div key={i} className="h-32 bg-[#121f18] rounded-xl" />
             ))}
           </div>
         </div>
@@ -64,304 +42,268 @@ export default function MetricsPanel({
 
     if (!comparisonResult) {
       return (
-        <div className="glass-panel rounded-lg p-4 text-center border border-dashed border-slate-700/80">
-          <p className="text-xs text-slate-400 font-medium">
-            Click &ldquo;Compare All Modes&rdquo; to see Fastest, Eco-Safe and Risk-Weighted side-by-side.
+        <div className="prod-card p-5 text-center border-dashed border-white/10">
+          <p className="text-xs text-slate-400">
+            Click &ldquo;Compare All 3 Modes Side-by-Side&rdquo; to analyze trade-offs between speed, canopy shade, and serenity.
           </p>
         </div>
       );
     }
 
-    const { fastest, ecoSafe, riskWeighted } = comparisonResult;
+    const { fastest, shadeSeeker, moodCalibrated, ecoSafe, riskWeighted } = comparisonResult;
+    const activeShade = shadeSeeker || ecoSafe;
+    const activeMood = moodCalibrated || riskWeighted;
+
     const rows = [
-      { label: 'Fastest', key: 'fastest', data: fastest, dotColor: '#ef4444' },
-      { label: 'Eco-Safe', key: 'ecoSafe', data: ecoSafe, dotColor: '#10b981' },
-      { label: 'Risk-Calibrated', key: 'riskWeighted', data: riskWeighted, dotColor: '#8b5cf6' }
+      {
+        id: 'fastest',
+        title: 'Fastest Direct Walk',
+        data: fastest,
+        colorDot: '#64748b',
+        borderClass: 'border-slate-700',
+        badge: 'Shortest Distance'
+      },
+      {
+        id: 'shade-seeker',
+        title: 'Shade Seeker',
+        data: activeShade,
+        colorDot: '#059669',
+        borderClass: 'border-emerald-600/80',
+        badge: 'Max Canopy (>70%)'
+      },
+      {
+        id: 'mood-calibrated',
+        title: 'Serenity & Joy Drift',
+        data: activeMood,
+        colorDot: '#f59e0b',
+        borderClass: 'border-amber-500/80',
+        badge: 'Optimized Well-Being'
+      }
     ];
 
-    // Find best values for highlighting
     const validRows = rows.filter((r) => r.data?.path);
     const bestDist = validRows.length > 0 ? Math.min(...validRows.map((r) => r.data.totalDistance || Infinity)) : null;
-    const bestAqi = validRows.length > 0 ? Math.min(...validRows.map((r) => r.data.totalAqiExposure || Infinity)) : null;
-    const bestPay = validRows.length > 0 ? Math.min(...validRows.map((r) => r.data.hazardPay || Infinity)) : null;
+    const bestCanopy = validRows.length > 0 ? Math.max(...validRows.map((r) => r.data.avgCanopyIndex || -Infinity)) : null;
+    const bestNoise = validRows.length > 0 ? Math.min(...validRows.map((r) => r.data.avgNoiseDb || Infinity)) : null;
+    const bestJoy = validRows.length > 0 ? Math.max(...validRows.map((r) => r.data.totalJoyMoments || -Infinity)) : null;
 
     return (
-      <div className="glass-panel rounded-lg p-4 flex flex-col gap-3 text-slate-200">
-        <div className="flex items-center justify-between pb-2.5 border-b border-slate-700/60">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-blue-500" />
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-200">
-              Mode Comparison
+      <div className="prod-card p-5 flex flex-col gap-4 text-slate-100">
+        <div className="flex items-center justify-between pb-3 border-b border-white/10">
+          <div>
+            <h3 className="text-sm font-bold text-white font-display">
+              Tri-Mode Route Comparison
             </h3>
+            <p className="text-xs text-slate-400">
+              Side-by-side trade-offs across geometry, tree cover, and acoustic comfort
+            </p>
           </div>
-          <span className="text-[10px] font-mono text-slate-400">
-            3 routing strategies
+          <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2.5 py-0.5 rounded-full">
+            3 Strategies
           </span>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-slate-400 border-b border-slate-800">
-                <th className="text-left py-2 pr-3 font-semibold uppercase text-[10px] tracking-wider">Mode</th>
-                <th className="text-right py-2 px-2 font-semibold uppercase text-[10px] tracking-wider">Distance</th>
-                <th className="text-right py-2 px-2 font-semibold uppercase text-[10px] tracking-wider">AQI Exposure</th>
-                <th className="text-right py-2 pl-2 font-semibold uppercase text-[10px] tracking-wider">Hazard Pay</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {rows.map((row) => {
-                const { data } = row;
-                const noPath = !data?.path;
-                const dist = data?.totalDistance;
-                const aqi = data?.totalAqiExposure;
-                const pay = data?.hazardPay;
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+          {rows.map(({ id, title, data, colorDot, borderClass, badge }) => {
+            if (!data?.path) {
+              return (
+                <div key={id} className="bg-[#121f18] border border-white/10 rounded-xl p-3.5 text-xs text-slate-400">
+                  <div className="font-semibold text-white mb-1">{title}</div>
+                  <p className="text-[11px]">No continuous walking path found.</p>
+                </div>
+              );
+            }
 
-                return (
-                  <tr key={row.key} className="hover:bg-slate-800/20 transition-colors">
-                    <td className="py-2.5 pr-3">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: row.dotColor }}
-                        />
-                        <span className="font-semibold text-slate-200">{row.label}</span>
-                      </div>
-                    </td>
-                    {noPath ? (
-                      <td colSpan={3} className="py-2.5 text-right text-amber-400 italic text-[10px]">
-                        No safe path available
-                      </td>
-                    ) : (
-                      <>
-                        <td className="py-2.5 px-2 text-right">
-                          <span className={`font-mono font-semibold ${dist === bestDist ? 'text-emerald-400' : 'text-slate-200'}`}>
-                            {dist != null ? `${dist} km` : '—'}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-2 text-right">
-                          <span className={`font-mono font-semibold ${aqi === bestAqi ? 'text-emerald-400' : 'text-slate-200'}`}>
-                            {aqi != null ? aqi.toLocaleString() : '—'}
-                          </span>
-                        </td>
-                        <td className="py-2.5 pl-2 text-right">
-                          <span className={`font-mono font-semibold ${pay === bestPay ? 'text-emerald-400' : 'text-slate-200'}`}>
-                            {pay != null ? `₹${Number(pay).toFixed(2)}` : '—'}
-                          </span>
-                        </td>
-                      </>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+            const isBestDist = data.totalDistance === bestDist;
+            const isBestCanopy = data.avgCanopyIndex === bestCanopy;
+            const isBestNoise = data.avgNoiseDb === bestNoise;
+            const isBestJoy = data.totalJoyMoments === bestJoy;
+
+            return (
+              <div
+                key={id}
+                className={`bg-[#121f18] border ${borderClass} rounded-xl p-4 flex flex-col justify-between gap-3 shadow-md`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-sm text-white flex items-center gap-1.5 font-display">
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: colorDot }} />
+                      <span>{title}</span>
+                    </span>
+                    <span className="text-[11px] font-mono text-emerald-400 font-semibold bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800/40">
+                      {data.estimatedWalkingMinutes} min
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono block mb-3">{badge}</span>
+
+                  <div className="space-y-2 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">Distance</span>
+                      <span className={`font-mono ${isBestDist ? 'text-emerald-400 font-bold' : 'text-slate-200'}`}>
+                        {data.totalDistance} km {isBestDist && '✓'}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">Canopy Cover</span>
+                      <span className={`font-mono ${isBestCanopy ? 'text-emerald-300 font-bold' : 'text-slate-200'}`}>
+                        {data.avgCanopyIndex}% {isBestCanopy && '✓'}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">Ambient Noise</span>
+                      <span className={`font-mono ${isBestNoise ? 'text-teal-300 font-bold' : 'text-slate-200'}`}>
+                        {data.avgNoiseDb} dB {isBestNoise && '✓'}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">Joy Micro-Moments</span>
+                      <span className={`font-mono ${isBestJoy ? 'text-amber-400 font-bold' : 'text-slate-200'}`}>
+                        {data.totalJoyMoments} spots {isBestJoy && '✓'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-2.5 border-t border-white/10 flex items-center justify-between">
+                  <span className="text-[11px] text-slate-400">Serenity Index</span>
+                  <span className="text-xs font-mono font-bold text-emerald-300 bg-emerald-950/80 border border-emerald-700/50 px-2 py-0.5 rounded-md">
+                    {data.serenityScore || 85} / 100
+                  </span>
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <p className="text-[10px] text-slate-500 mt-1">
-          <span className="text-emerald-400 font-semibold">Green</span> = best value in each column.
-        </p>
       </div>
     );
   }
 
-  // --- SINGLE ROUTE MODE ---
-
-  // 1. Loading skeleton
-  if (loading) {
+  // --- SINGLE ROUTE MODE: When no route calculated yet ---
+  if (!currentRoute?.path || currentRoute.path.length < 2) {
     return (
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[1, 2, 3, 4].map((i) => (
-          <div
-            key={i}
-            className="glass-card rounded-lg p-3.5 h-24 flex flex-col justify-between animate-pulse"
-          >
-            <div className="h-3 w-20 bg-slate-700/60 rounded" />
-            <div className="h-7 w-24 bg-slate-700/60 rounded" />
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  // 2. Empty state
-  if (!currentRoute) {
-    return (
-      <div className="glass-panel rounded-lg p-4 text-center border border-dashed border-slate-700/80">
-        <p className="text-xs text-slate-400 font-medium">
-          Select a warehouse and destination, then calculate a route to view operations telemetry
-        </p>
-      </div>
-    );
-  }
-
-  // 3. No safe path
-  if (currentRoute.path === null) {
-    return (
-      <div className="bg-amber-950/40 border border-amber-500/40 rounded-lg p-4 flex items-start gap-3.5 text-amber-200 backdrop-blur-md">
-        <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 font-bold">
-          !
-        </div>
+      <div className="prod-card p-5 flex items-center justify-between text-slate-300">
         <div>
-          <div className="text-sm font-semibold text-amber-300">
-            No safe path exists between these points at current AQI levels
+          <div className="font-bold text-white text-sm font-display">
+            Awaiting Drift Parameters
           </div>
-          <p className="text-xs text-amber-200/80 mt-1 leading-relaxed">
-            {currentRoute.reason ||
-              'All arterial road corridors exceed the 400 AQI safety ceiling. Switch to Risk-Weighted mode to allow controlled dispatch with hazard compensation.'}
+          <p className="text-xs text-slate-400 mt-0.5">
+            Choose an origin and destination above, then click &ldquo;Calculate Scenic Route&rdquo; to view route geometry and serenity scores.
           </p>
         </div>
+        <div className="hidden sm:flex items-center gap-4 text-xs font-mono text-slate-400 pl-4 border-l border-white/10 shrink-0">
+          <div>
+            <div className="font-bold text-white">52 Havens</div>
+            <div className="text-[10px]">Connected</div>
+          </div>
+          <div>
+            <div className="font-bold text-emerald-400">&gt;70% Shade</div>
+            <div className="text-[10px]">Filter Ready</div>
+          </div>
+        </div>
       </div>
     );
   }
 
-  const pathLength = currentRoute.path ? currentRoute.path.length : 0;
-  const avgAqiPerNode = currentRoute?.avgAqi != null
-    ? currentRoute.avgAqi
-    : (pathLength > 0 ? Math.round(calculatedAqiExposure / 5) : 0);
-  const riderImpact = currentRoute.riderImpact;
+  // --- ACTIVE ROUTE SUMMARY ---
+  const {
+    totalDistance = 0,
+    estimatedWalkingMinutes = 0,
+    avgCanopyIndex = 70,
+    avgNoiseDb = 50,
+    totalJoyMoments = 5,
+    serenityScore = 80,
+    path = []
+  } = currentRoute;
+
+  const canopyTier = getCanopyBadge(avgCanopyIndex);
+  const noiseTier = getNoiseBadge(avgNoiseDb);
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* SLA Warning/Info banners */}
-      {currentRoute.slaRelaxed === true && (
-        <div className={`rounded-lg border p-3 text-xs flex items-start gap-2.5 ${
-          currentRoute.slaAchievable === false
-            ? 'bg-rose-950/40 border-rose-500/40 text-rose-200'
-            : 'bg-amber-950/30 border-amber-500/40 text-amber-200'
-        }`}>
-          <span className="text-base mt-0.5">
-            {currentRoute.slaAchievable === false ? '⚠' : 'ℹ'}
-          </span>
-          <div>
-            {currentRoute.slaAchievable === false ? (
-              <>
-                <div className="font-semibold text-rose-300">SLA cannot be met — fastest route selected</div>
-                <div className="mt-0.5 text-rose-200/80">
-                  Fastest route takes {currentRoute.estimatedMinutes} min, which exceeds your {currentRoute.targetMinutes ? `${currentRoute.targetMinutes} min ` : ''}deadline.
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="font-semibold text-amber-300">
-                  SLA met via auto-relaxed alpha (α = {currentRoute.effectiveAlpha})
-                </div>
-                <div className="mt-0.5 text-amber-200/80">
-                  Estimated transit: <strong>{currentRoute.estimatedMinutes} min</strong> (within {currentRoute.targetMinutes ? `${currentRoute.targetMinutes} min ` : ''}deadline). Pollution penalty lowered to satisfy SLA.
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Rider cap warning */}
-      {riderImpact?.wouldExceedCap && (
-        <div className="bg-rose-950/40 border border-rose-500/50 rounded-lg px-3 py-2.5 text-xs text-rose-200 flex items-center gap-2">
-          <span>⚠</span>
-          <span>
-            This route would push <strong>{riderImpact.riderName}</strong> to{' '}
-            {riderImpact.newExposure?.toLocaleString()} AQI pts — exceeding daily cap of{' '}
-            {riderImpact.dailyCap?.toLocaleString()}.
-          </span>
-        </div>
-      )}
-
-      {/* Committed confirmation */}
-      {riderImpact?.committed && (
-        <div className="bg-emerald-950/40 border border-emerald-500/40 rounded-lg px-3 py-2.5 text-xs text-emerald-200 flex items-center gap-2">
-          <span>✓</span>
-          <span>
-            Route committed to <strong>{riderImpact.riderName}</strong>.{' '}
-            New exposure: {riderImpact.currentExposure?.toLocaleString()} AQI pts.
-          </span>
-        </div>
-      )}
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {/* Distance */}
-        <div className="glass-card rounded-lg p-3.5 flex flex-col justify-between relative overflow-hidden group transition-all duration-200 hover:-translate-y-0.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-              Corridor Distance
+    <div className="prod-card p-5 flex flex-col gap-4 text-slate-100">
+      {/* Route Headline Banner */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-white/10 gap-2">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-lg font-extrabold text-white font-display">
+              {estimatedWalkingMinutes} min walk
             </span>
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+            <span className="text-slate-500">·</span>
+            <span className="text-sm font-mono text-slate-300 font-semibold">
+              {totalDistance} km
+            </span>
           </div>
+          <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5">
+            <span>Route:</span>
+            <span className="text-emerald-300 font-medium">{path[0]}</span>
+            <span>➔</span>
+            <span className="text-teal-300 font-medium">{path[path.length - 1]}</span>
+          </p>
+        </div>
+
+        {/* Serenity Score Badge */}
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="bg-[#121f18] border border-emerald-500/40 rounded-xl px-3.5 py-1.5 text-right">
+            <div className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+              Serenity Score
+            </div>
+            <div className="text-base font-bold font-mono text-emerald-300">
+              {serenityScore} <span className="text-xs font-normal text-slate-400">/ 100</span>
+            </div>
+          </div>
+          {onCommitRoute && (
+            <button
+              type="button"
+              onClick={onCommitRoute}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-3.5 py-2.5 rounded-xl transition-all cursor-pointer shadow-md"
+            >
+              Log Walk
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 3 Key Metric Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* Tree Canopy */}
+        <div className="bg-[#121f18] border border-white/10 rounded-xl p-3.5 flex flex-col justify-between">
+          <div className="text-xs font-semibold text-slate-400">Tree Canopy Cover</div>
           <div className="my-1.5">
-            <span className="text-2xl font-bold font-mono text-white tracking-tight">
-              {currentRoute.totalDistance != null ? currentRoute.totalDistance : '0'}
+            <span className="text-2xl font-bold font-mono text-emerald-300">
+              {avgCanopyIndex}%
             </span>
-            <span className="text-xs font-normal text-slate-400 ml-1">km</span>
           </div>
-          <span className="text-[10px] text-slate-500 font-mono">
-            {pathLength > 1 ? `${pathLength - 1} road segments` : 'Direct leg'}
-          </span>
+          <div className={`text-[10px] font-semibold px-2 py-0.5 rounded border inline-block w-fit ${canopyTier.badgeClass}`}>
+            {canopyTier.label}
+          </div>
         </div>
 
-        {/* AQI Exposure */}
-        <div className="glass-card rounded-lg p-3.5 flex flex-col justify-between relative overflow-hidden group transition-all duration-200 hover:-translate-y-0.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-              AQI Exposure
-            </span>
-            <span
-              className={`w-1.5 h-1.5 rounded-full ${
-                avgAqiPerNode > 400
-                  ? 'bg-rose-500'
-                  : avgAqiPerNode > 200
-                  ? 'bg-amber-500'
-                  : 'bg-emerald-500'
-              }`}
-            />
-          </div>
+        {/* Acoustic Decibels */}
+        <div className="bg-[#121f18] border border-white/10 rounded-xl p-3.5 flex flex-col justify-between">
+          <div className="text-xs font-semibold text-slate-400">Ambient Acoustic Level</div>
           <div className="my-1.5">
-            <span className="text-2xl font-bold font-mono text-white tracking-tight">
-              {calculatedAqiExposure}
+            <span className="text-2xl font-bold font-mono text-teal-300">
+              {avgNoiseDb} <span className="text-xs font-normal text-slate-400">dB</span>
             </span>
-            <span className="text-xs font-normal text-slate-400 ml-1">AQI pts</span>
           </div>
-          <span className="text-[10px] text-slate-400 font-mono">
-            Avg: <strong className="text-slate-200">{avgAqiPerNode}</strong> AQI level
-          </span>
+          <div className={`text-[10px] font-medium ${noiseTier.textClass}`}>
+            {noiseTier.label}
+          </div>
         </div>
 
-        {/* Hazard Pay */}
-        <div className="glass-card rounded-lg p-3.5 flex flex-col justify-between relative overflow-hidden group transition-all duration-200 hover:-translate-y-0.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-              Rider Hazard Pay
-            </span>
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-          </div>
+        {/* Micro-Moments of Joy */}
+        <div className="bg-[#121f18] border border-white/10 rounded-xl p-3.5 flex flex-col justify-between">
+          <div className="text-xs font-semibold text-slate-400">Micro-Moments Unlocked</div>
           <div className="my-1.5">
-            <span className="text-2xl font-bold font-mono text-amber-300 tracking-tight">
-              ₹{calculatedHazardPay.toFixed(2)}
+            <span className="text-2xl font-bold font-mono text-amber-300">
+              {totalJoyMoments} <span className="text-xs font-normal text-slate-400">gems</span>
             </span>
           </div>
-          <span className="text-[10px] text-slate-400 font-mono">
-            ₹1.50/km + AQI surge bonus
-          </span>
-        </div>
-
-        {/* Bypassed / Waypoints */}
-        <div className="glass-card rounded-lg p-3.5 flex flex-col justify-between relative overflow-hidden group transition-all duration-200 hover:-translate-y-0.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-              {mode === 'eco-safe' ? 'Bypassed Hotspots' : 'Route Waypoints'}
-            </span>
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          <div className="text-[10px] text-slate-400">
+            Historic markers, murals &amp; fountains
           </div>
-          <div className="my-1.5">
-            <span className="text-2xl font-bold font-mono text-emerald-300 tracking-tight">
-              {mode === 'eco-safe' ? calculatedBypassed : pathLength}
-            </span>
-            <span className="text-xs font-normal text-slate-400 ml-1">
-              {mode === 'eco-safe' ? 'excluded' : 'nodes'}
-            </span>
-          </div>
-          <span className="text-[10px] text-slate-400 font-mono">
-            {mode === 'eco-safe' ? 'Above 400 AQI threshold' : 'Active transit hubs'}
-          </span>
         </div>
       </div>
     </div>

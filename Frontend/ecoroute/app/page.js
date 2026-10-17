@@ -4,113 +4,122 @@ import { useState, useEffect, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import Controls from '@/components/Controls';
 import MetricsPanel from '@/components/MetricsPanel';
-import HighRiskPanel from '@/components/HighRiskPanel';
-import RiderPanel from '@/components/RiderPanel';
+import JoyPinsPanel from '@/components/JoyPinsPanel';
+import WellbeingMetricsPanel from '@/components/WellbeingMetricsPanel';
 
 // Dynamically import Leaflet MapView with SSR disabled
 const MapView = dynamic(() => import('@/components/MapView'), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-[500px] bg-slate-900 border border-slate-800 rounded-lg flex items-center justify-center text-slate-400 text-xs font-mono">
-      Loading Delhi NCR Spatial Network...
+    <div className="w-full h-[580px] lg:h-[640px] bg-[#0c1611] border border-white/10 rounded-2xl flex items-center justify-center text-emerald-400/80 text-sm font-medium">
+      Loading Delhi NCR Scenic Map...
     </div>
   )
 });
 
-export default function EcoRouteDashboard() {
-  // --- Core data ---
+export default function JoyWalkDashboard() {
+  // --- Active Tab in Left Sidebar: 'plan' | 'joypins' | 'journal' ---
+  const [activeTab, setActiveTab] = useState('plan');
+
+  // --- Spatial Network Data ---
   const [neighborhoods, setNeighborhoods] = useState([]);
   const [roads, setRoads] = useState([]);
-  const [highRiskNodes, setHighRiskNodes] = useState([]);
-  const [riders, setRiders] = useState([]);
+  const [joyPins, setJoyPins] = useState([]);
+  const [selectedPin, setSelectedPin] = useState(null);
+  const [wellbeingData, setWellbeingData] = useState({
+    shadedKmWalked: 3.8,
+    dailyGoalKm: 5.0,
+    joyMomentsUnlocked: 11,
+    joyMomentsGoal: 15,
+    serenityStreakDays: 4,
+    acousticSerenityAvgDb: 47.5,
+    completedWalks: []
+  });
 
-  // --- Route inputs ---
-  const [source, setSource] = useState('');
-  const [target, setTarget] = useState('');
-  const [mode, setMode] = useState('fastest');
-  const [alpha, setAlpha] = useState(1.0);
-  const [maxDeliveryMinutes, setMaxDeliveryMinutes] = useState('');
-  const [selectedRiderId, setSelectedRiderId] = useState('');
+  // --- Route Inputs ---
+  const [source, setSource] = useState('Lodhi Art District & Gardens');
+  const [target, setTarget] = useState('Sunder Nursery Heritage Park');
+  const [mode, setMode] = useState('mood-calibrated');
+  const [mood, setMood] = useState('Reflective');
+  const [serenityWeight, setSerenityWeight] = useState(1.0);
 
-  // --- Route output ---
+  // --- Route Output: Starts as null so map is completely clean initially ---
   const [currentRoute, setCurrentRoute] = useState(null);
 
-  // --- Compare mode ---
+  // --- Compare Mode ---
   const [compareMode, setCompareMode] = useState(false);
   const [comparisonResult, setComparisonResult] = useState(null);
 
-  // --- Loading flags ---
+  // --- Dynamic Golden Hour State ---
+  const [goldenHourActive, setGoldenHourActive] = useState(false);
+  const [loadingGoldenHour, setLoadingGoldenHour] = useState(false);
+
+  // --- Loading Flags ---
   const [loadingRoute, setLoadingRoute] = useState(false);
-  const [loadingSpike, setLoadingSpike] = useState(false);
   const [loadingCompare, setLoadingCompare] = useState(false);
   const [loadingCommit, setLoadingCommit] = useState(false);
-  const [loadingRiders, setLoadingRiders] = useState(false);
-  const [pendingRider, setPendingRider] = useState(null);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState('');
   const [toast, setToast] = useState(null);
 
-  // Toast helper
-  const showToast = useCallback((message, borderColor = 'border-blue-500') => {
+  // Toast Helper
+  const showToast = useCallback((message, borderColor = 'border-emerald-500') => {
     setToast({ message, borderColor });
     setTimeout(() => {
       setToast((prev) => (prev?.message === message ? null : prev));
     }, 4500);
   }, []);
 
-  const getNowTimeString = () =>
-    new Date().toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    });
+  // ── Fetch Spatial Data ───────────────────────────────────────────────────────
 
-  // ── Fetch helpers ───────────────────────────────────────────────────────────
-
-  const fetchHighRiskNodes = useCallback(async () => {
+  const fetchJoyPins = useCallback(async () => {
     try {
-      const res = await fetch('/api/high-risk');
+      const res = await fetch('/api/joy-pins');
       if (!res.ok) return;
       const data = await res.json();
-      setHighRiskNodes(data.highRiskNodes || []);
+      setJoyPins(data.joyPins || []);
     } catch (err) {
-      console.error('Fetch high-risk nodes error:', err);
+      console.error('Fetch joy pins error:', err);
     }
   }, []);
 
-  const fetchRiders = useCallback(async () => {
+  const fetchWellbeing = useCallback(async () => {
     try {
-      const res = await fetch('/api/riders');
+      const res = await fetch('/api/wellbeing');
       if (!res.ok) return;
       const data = await res.json();
-      setRiders(data.riders || []);
+      setWellbeingData(data);
     } catch (err) {
-      console.error('Fetch riders error:', err);
+      console.error('Fetch wellbeing error:', err);
     }
   }, []);
 
   const fetchNeighborhoods = useCallback(async () => {
     try {
       const res = await fetch('/api/neighborhoods');
-      if (!res.ok) throw new Error('Failed to fetch neighborhoods');
+      if (!res.ok) throw new Error('Failed to fetch spatial havens');
       const data = await res.json();
       const nodes = data.neighborhoods || [];
       setNeighborhoods(nodes);
       setRoads(data.roads || []);
-      setLastUpdated(getNowTimeString());
       return nodes;
     } catch (err) {
       console.error('Fetch neighborhoods error:', err);
-      showToast('Could not load neighborhood data', 'border-red-500');
+      showToast('Could not load spatial haven data', 'border-rose-500');
       return [];
     }
   }, [showToast]);
 
-  // ── Route calculation ──────────────────────────────────────────────────────
+  // ── Route Calculation (Triggered when user clicks Calculate or changes inputs) ──
 
   const calculateRoute = useCallback(
-    async (src, tgt, currentMode, currentAlpha, currentMaxMins, currentRiderId, showRecalculatedToast = true) => {
+    async (
+      src = source,
+      tgt = target,
+      currentMode = mode,
+      currentMood = mood,
+      currentWeight = serenityWeight,
+      showToastMsg = true
+    ) => {
       if (!src || !tgt) return;
       setLoadingRoute(true);
       try {
@@ -118,13 +127,10 @@ export default function EcoRouteDashboard() {
           source: src,
           target: tgt,
           mode: currentMode,
-          alpha: currentAlpha,
+          mood: currentMood,
+          serenityWeight: currentWeight,
           commit: false
         };
-        if (currentRiderId) body.riderId = currentRiderId;
-        if (currentMaxMins && !isNaN(Number(currentMaxMins)) && Number(currentMaxMins) > 0) {
-          body.maxDeliveryMinutes = Number(currentMaxMins);
-        }
 
         const res = await fetch('/api/route', {
           method: 'POST',
@@ -133,30 +139,36 @@ export default function EcoRouteDashboard() {
         });
 
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Failed to compute route');
+        if (!res.ok) throw new Error(data.error || 'Failed to compute scenic walk');
 
         setCurrentRoute(data);
-        if (showRecalculatedToast) {
-          showToast('Route recalculated', 'border-blue-500');
+        if (showToastMsg) {
+          showToast(`Scenic route mapped: ${data.avgCanopyIndex}% canopy shade (${data.estimatedWalkingMinutes} min walk)`, 'border-emerald-500');
         }
-        await fetchHighRiskNodes();
       } catch (err) {
         console.error('Route calculation error:', err);
-        showToast(err.message || 'Route calculation failed', 'border-red-500');
+        showToast(err.message || 'Route calculation failed', 'border-rose-500');
       } finally {
         setLoadingRoute(false);
       }
     },
-    [showToast, fetchHighRiskNodes]
+    [source, target, mode, mood, serenityWeight, showToast]
   );
 
-  // ── Compare mode calculation ───────────────────────────────────────────────
+  // ── Compare Mode ───────────────────────────────────────────────────────────
 
   const handleCompareWith = useCallback(
-    async (src = source, tgt = target, currentAlpha = alpha, showToastMsg = true) => {
+    async (
+      src = source,
+      tgt = target,
+      currentMood = mood,
+      currentWeight = serenityWeight,
+      showToastMsg = true
+    ) => {
       const activeSrc = src || source;
       const activeTgt = tgt || target;
       if (!activeSrc || !activeTgt) return;
+
       setLoadingCompare(true);
       try {
         const res = await fetch('/api/compare', {
@@ -165,73 +177,36 @@ export default function EcoRouteDashboard() {
           body: JSON.stringify({
             source: activeSrc,
             target: activeTgt,
-            alpha: parseFloat(currentAlpha) || 1.0
+            mood: currentMood,
+            serenityWeight: currentWeight
           })
         });
+
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || 'Failed to compare routes');
+          throw new Error(errData.error || 'Failed to evaluate walking modes');
         }
+
         const data = await res.json();
         setComparisonResult(data);
-        await fetchHighRiskNodes();
         if (showToastMsg) {
-          showToast('All 3 modes compared', 'border-blue-500');
+          showToast('Tri-mode evaluation complete: Fastest, Shade Seeker & Mood Drift', 'border-teal-500');
         }
       } catch (err) {
-        if (err.name !== 'AbortError') {
-          console.warn('Compare error:', err);
-          showToast(err.message || 'Comparison failed', 'border-red-500');
-        }
+        console.warn('Compare error:', err);
+        showToast(err.message || 'Comparison failed', 'border-rose-500');
       } finally {
         setLoadingCompare(false);
       }
     },
-    [source, target, alpha, fetchHighRiskNodes, showToast]
+    [source, target, mood, serenityWeight, showToast]
   );
 
   const handleCompare = useCallback(async () => {
-    await handleCompareWith(source, target, alpha, true);
-  }, [handleCompareWith, source, target, alpha]);
+    await handleCompareWith(source, target, mood, serenityWeight, true);
+  }, [handleCompareWith, source, target, mood, serenityWeight]);
 
-  // ── Commit route to rider ─────────────────────────────────────────────────
-
-  const handleCommitRoute = useCallback(async () => {
-    if (!selectedRiderId || !currentRoute?.path) return;
-    setLoadingCommit(true);
-    try {
-      const body = {
-        source,
-        target,
-        mode,
-        alpha,
-        riderId: selectedRiderId,
-        commit: true
-      };
-      if (maxDeliveryMinutes && !isNaN(Number(maxDeliveryMinutes)) && Number(maxDeliveryMinutes) > 0) {
-        body.maxDeliveryMinutes = Number(maxDeliveryMinutes);
-      }
-
-      const res = await fetch('/api/route', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to commit route');
-
-      setCurrentRoute(data);
-      await fetchRiders();
-      showToast(`Route committed to ${selectedRiderId.split(' (')[0]}`, 'border-emerald-500');
-    } catch (err) {
-      console.error('Commit error:', err);
-      showToast(err.message || 'Commit failed', 'border-red-500');
-    } finally {
-      setLoadingCommit(false);
-    }
-  }, [selectedRiderId, currentRoute, source, target, mode, alpha, maxDeliveryMinutes, fetchRiders, showToast]);
-
-  // ── Initial load ───────────────────────────────────────────────────────────
+  // ── Initial Load: Clean map without pre-drawn routes ─────────────────────────
 
   useEffect(() => {
     let isMounted = true;
@@ -239,207 +214,233 @@ export default function EcoRouteDashboard() {
       setInitialLoading(true);
       const [nodes] = await Promise.all([
         fetchNeighborhoods(),
-        fetchHighRiskNodes(),
-        fetchRiders()
+        fetchJoyPins(),
+        fetchWellbeing()
       ]);
+
       if (isMounted && nodes.length > 0) {
-        const warehouses = nodes.filter((n) => n.isWarehouse);
-        const customers = nodes.filter((n) => !n.isWarehouse);
-        setSource(warehouses[0]?.name || nodes[0]?.name);
-        setTarget(customers[0]?.name || nodes[1]?.name);
+        const lodhiNode = nodes.find((n) => n.name.includes('Lodhi'));
+        const sunderNode = nodes.find((n) => n.name.includes('Sunder'));
+        if (lodhiNode) setSource(lodhiNode.name);
+        if (sunderNode) setTarget(sunderNode.name);
+        // Note: We intentionally do NOT call calculateRoute here so the map starts clean!
       }
+
       if (isMounted) setInitialLoading(false);
     }
     init();
-    return () => { isMounted = false; };
-  }, [fetchNeighborhoods, fetchHighRiskNodes, fetchRiders]);
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchNeighborhoods, fetchJoyPins, fetchWellbeing]);
 
-  // ── Auto-recalculate on input change ─────────────────────────────────────────
+  // ── Input Changes ──────────────────────────────────────────────────────────
 
   const handleSourceChange = (newSource) => {
     setSource(newSource);
     if (compareMode) {
-      handleCompareWith(newSource, target, alpha, false);
+      handleCompareWith(newSource, target, mood, serenityWeight, false);
     } else if (currentRoute) {
-      calculateRoute(newSource, target, mode, alpha, maxDeliveryMinutes, selectedRiderId, true);
+      calculateRoute(newSource, target, mode, mood, serenityWeight, false);
     }
   };
 
   const handleTargetChange = (newTarget) => {
     setTarget(newTarget);
     if (compareMode) {
-      handleCompareWith(source, newTarget, alpha, false);
+      handleCompareWith(source, newTarget, mood, serenityWeight, false);
     } else if (currentRoute) {
-      calculateRoute(source, newTarget, mode, alpha, maxDeliveryMinutes, selectedRiderId, true);
+      calculateRoute(source, newTarget, mode, mood, serenityWeight, false);
     }
   };
 
   const handleModeChange = (newMode) => {
     setMode(newMode);
-    if (currentRoute) {
-      calculateRoute(source, target, newMode, alpha, maxDeliveryMinutes, selectedRiderId, true);
+    if (!compareMode && currentRoute) {
+      calculateRoute(source, target, newMode, mood, serenityWeight, true);
     }
   };
 
-  const handleAlphaChange = (newAlpha) => {
-    setAlpha(newAlpha);
+  const handleMoodChange = (newMood) => {
+    setMood(newMood);
     if (compareMode) {
-      handleCompareWith(source, target, newAlpha, false);
-    } else if (currentRoute || (source && target)) {
-      calculateRoute(source, target, mode, newAlpha, maxDeliveryMinutes, selectedRiderId, false);
+      handleCompareWith(source, target, newMood, serenityWeight, false);
+    } else if (currentRoute && mode === 'mood-calibrated') {
+      calculateRoute(source, target, mode, newMood, serenityWeight, true);
     }
   };
 
-  const handleRiderChange = (newRiderId) => {
-    setSelectedRiderId(newRiderId);
-    if (currentRoute) {
-      calculateRoute(source, target, mode, alpha, maxDeliveryMinutes, newRiderId, false);
+  const handleSerenityWeightChange = (newWeight) => {
+    setSerenityWeight(newWeight);
+    if (compareMode) {
+      handleCompareWith(source, target, mood, newWeight, false);
+    } else if (currentRoute) {
+      calculateRoute(source, target, mode, mood, newWeight, false);
     }
   };
 
-  const handleMaxDeliveryMinutesChange = (newMinutes) => {
-    setMaxDeliveryMinutes(newMinutes);
-    if (currentRoute && mode === 'risk-weighted') {
-      calculateRoute(source, target, mode, alpha, newMinutes, selectedRiderId, false);
-    }
-  };
-
-  // When compare mode is toggled, auto-trigger compare immediately!
   const handleCompareModeToggle = (val) => {
     setCompareMode(val);
     if (val) {
       setCurrentRoute(null);
-      handleCompareWith(source, target, alpha, true);
+      handleCompareWith(source, target, mood, serenityWeight, true);
     } else {
       setComparisonResult(null);
-      if (source && target) {
-        calculateRoute(source, target, mode, alpha, maxDeliveryMinutes, selectedRiderId, false);
-      }
     }
   };
 
-  const handleCalculate = () => {
-    calculateRoute(source, target, mode, alpha, maxDeliveryMinutes, selectedRiderId, true);
-  };
+  // ── Dynamic Golden Hour Simulation ─────────────────────────────────────────
 
-  // ── AQI Spike ─────────────────────────────────────────────────────────────
-
-  const handleTriggerSpike = async () => {
-    setLoadingSpike(true);
+  const handleTriggerGoldenHour = async () => {
+    setLoadingGoldenHour(true);
     try {
-      const res = await fetch('/api/spike', {
+      const res = await fetch('/api/golden-hour', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to trigger AQI spike');
+      if (!res.ok) throw new Error(data.error || 'Failed to simulate golden hour');
 
-      // 1. Refresh neighborhood AQI values on the map
+      setGoldenHourActive(data.goldenHourActive);
       await fetchNeighborhoods();
-      await fetchHighRiskNodes();
 
-      // 2. Always recalculate route if source & target are selected — regardless of prior route existence
-      if (compareMode && comparisonResult) {
+      if (compareMode) {
         await handleCompare();
-      } else if (source && target) {
-        await calculateRoute(source, target, mode, alpha, maxDeliveryMinutes, selectedRiderId, false);
+      } else if (currentRoute && source && target) {
+        await calculateRoute(source, target, mode, mood, serenityWeight, false);
       }
 
-      // 3. Notify which nodes were spiked
-      const spikedNames = data.updatedNodes
-        ?.filter((n) => n.isSpike)
-        .map((n) => `${n.name} → AQI ${n.newAqi}`)
-        .join(', ');
-      const count = data.updatedNodes?.length || 0;
-      const spikeMsg = spikedNames
-        ? `⚡ Smog spike: ${spikedNames}`
-        : `AQI spike triggered — ${count} zones updated`;
-      showToast(spikeMsg, 'border-amber-500');
+      showToast(data.message, data.goldenHourActive ? 'border-amber-500' : 'border-emerald-500');
     } catch (err) {
-      console.error('Spike error:', err);
-      showToast(err.message || 'Failed to simulate spike', 'border-red-500');
+      console.error('Golden hour error:', err);
+      showToast(err.message || 'Simulation error', 'border-rose-500');
     } finally {
-      setLoadingSpike(false);
+      setLoadingGoldenHour(false);
     }
   };
 
-  // ── Rider management ──────────────────────────────────────────────────────
+  // ── Joy Pins Actions ───────────────────────────────────────────────────────
 
-  const handleResetRider = async (riderName) => {
-    setPendingRider(riderName);
+  const handleAddJoyPin = async (pinData) => {
     try {
-      const res = await fetch('/api/riders', {
+      const res = await fetch('/api/joy-pins', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reset', riderName })
+        body: JSON.stringify(pinData)
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      await fetchRiders();
-      showToast(`Shift reset for ${riderName.split(' (')[0]}`, 'border-blue-500');
+      if (!res.ok) throw new Error(data.error || 'Failed to drop pin');
+
+      await fetchJoyPins();
+      showToast(`Placed "${pinData.title}" on the scenic map`, 'border-amber-400');
     } catch (err) {
-      showToast(err.message || 'Reset failed', 'border-red-500');
-    } finally {
-      setPendingRider(null);
+      showToast(err.message || 'Error dropping pin', 'border-rose-500');
     }
   };
 
-  const handleResetAll = async () => {
-    setLoadingRiders(true);
+  const handleLikeJoyPin = async (pinId) => {
     try {
-      const res = await fetch('/api/riders', {
+      const res = await fetch('/api/joy-pins', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'resetAll' })
+        body: JSON.stringify({ action: 'like', pinId })
+      });
+      if (res.ok) {
+        setJoyPins((prev) =>
+          prev.map((p) => (p.id === pinId ? { ...p, likes: (p.likes || 0) + 1 } : p))
+        );
+      }
+    } catch (err) {
+      console.error('Like pin error:', err);
+    }
+  };
+
+  // ── Commit Walk to Serenity Journal ────────────────────────────────────────
+
+  const handleCommitWalk = async () => {
+    if (!currentRoute?.path) return;
+    setLoadingCommit(true);
+    try {
+      const res = await fetch('/api/wellbeing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'log',
+          routeName: `${source} ➔ ${target}`,
+          distance: currentRoute.totalDistance,
+          avgCanopy: currentRoute.avgCanopyIndex,
+          joyPoints: currentRoute.totalJoyMoments
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      await fetchRiders();
-      showToast('All rider shifts reset', 'border-blue-500');
+
+      await fetchWellbeing();
+      showToast('Walk logged to your Serenity Journal', 'border-emerald-400');
     } catch (err) {
-      showToast(err.message || 'Reset failed', 'border-red-500');
+      showToast(err.message || 'Failed to log walk', 'border-rose-500');
     } finally {
-      setLoadingRiders(false);
+      setLoadingCommit(false);
+    }
+  };
+
+  const handleResetJournal = async () => {
+    try {
+      const res = await fetch('/api/wellbeing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reset' })
+      });
+      if (res.ok) {
+        await fetchWellbeing();
+        showToast('Daily serenity journal reset', 'border-teal-400');
+      }
+    } catch (err) {
+      console.error(err);
     }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#090d16] text-slate-100 selection:bg-blue-600 selection:text-white">
-      {/* Top Header Bar */}
-      <header className="bg-slate-950/80 border-b border-slate-800/80 sticky top-0 z-50 backdrop-blur-xl">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-15 flex items-center justify-between">
-          {/* Logo & App Name */}
+    <div className="min-h-screen flex flex-col bg-[#09110d] text-slate-100">
+      {/* Top Header */}
+      <header className="bg-[#0b1410] border-b border-white/10 sticky top-0 z-50">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+          {/* Brand Identity */}
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center font-bold text-xs tracking-wider shadow-md shadow-blue-500/20">
-              ER
+            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shadow-sm">
+              JW
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-sm tracking-tight text-white uppercase">
-                  EcoRoute
+                <span className="font-bold text-base tracking-tight text-white font-display">
+                  JoyWalk
                 </span>
-                <span className="text-xs text-slate-500 font-normal">|</span>
-                <span className="text-xs font-medium text-slate-300">
-                  Delhi NCR Dispatch Console
+                <span className="text-xs text-slate-500 font-normal">/</span>
+                <span className="text-xs text-slate-300 font-medium">
+                  Scenic Drift Navigator
                 </span>
               </div>
+              <p className="text-[11px] text-slate-400 hidden sm:block">
+                Pedestrian routes optimized for shade canopy, acoustic quietude &amp; joy · Delhi NCR
+              </p>
             </div>
           </div>
 
-          {/* Status Pills */}
+          {/* Status & Quick Stats */}
           <div className="flex items-center gap-3">
-            {compareMode && (
-              <span className="text-[11px] font-semibold text-blue-300 bg-blue-950/60 border border-blue-800/60 px-2.5 py-1 rounded-lg">
-                Compare Mode
+            {goldenHourActive && (
+              <span className="text-xs font-semibold text-amber-300 bg-amber-950/70 border border-amber-600/50 px-2.5 py-1 rounded-full flex items-center gap-1.5 golden-badge">
+                <span>🌅 Golden Hour Corridors</span>
               </span>
             )}
-            <div className="flex items-center gap-2.5 bg-slate-900/90 border border-slate-800 px-3 py-1.5 rounded-lg text-xs font-mono text-slate-300 shadow-inner">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 live-beacon" />
-              <span className="font-semibold text-emerald-300">Live</span>
-              <span className="text-slate-600">|</span>
-              <span className="text-slate-400">Updated {lastUpdated || '—'}</span>
+
+            <div className="hidden sm:flex items-center gap-2 bg-[#121f18] border border-white/10 px-3 py-1.5 rounded-xl text-xs text-slate-300">
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span className="font-medium text-emerald-300">52 Havens</span>
+              <span className="text-slate-600">·</span>
+              <span className="text-slate-400">176 Shaded Corridors</span>
             </div>
           </div>
         </div>
@@ -447,9 +448,9 @@ export default function EcoRouteDashboard() {
 
       {/* Toast Notification */}
       {toast && (
-        <div className="fixed top-16 right-6 z-[2000] max-w-sm transition-all duration-300">
+        <div className="fixed top-20 right-6 z-[2000] max-w-sm transition-all duration-300">
           <div
-            className={`bg-slate-900/95 border border-slate-700/80 backdrop-blur-xl rounded-lg p-3.5 shadow-2xl flex items-center justify-between gap-3 text-xs border-l-4 ${toast.borderColor} text-slate-100`}
+            className={`bg-[#0f1813] border border-white/10 rounded-xl p-3.5 shadow-2xl flex items-center justify-between gap-3 text-xs border-l-4 ${toast.borderColor} text-slate-100`}
           >
             <span className="font-medium text-slate-200">{toast.message}</span>
             <button
@@ -463,84 +464,122 @@ export default function EcoRouteDashboard() {
         </div>
       )}
 
-      {/* Main Dashboard */}
-      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-5 flex-1 w-full">
+      {/* Main App Workspace */}
+      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-6 flex-1 w-full">
         {initialLoading ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            <div className="lg:col-span-4 xl:col-span-3">
-              <div className="glass-panel rounded-lg p-5 h-96 flex flex-col gap-4 animate-pulse">
-                <div className="h-4 bg-slate-800 rounded w-1/3" />
-                <div className="h-10 bg-slate-800 rounded" />
-                <div className="h-10 bg-slate-800 rounded" />
-                <div className="h-10 bg-slate-800 rounded" />
-              </div>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-4">
+              <div className="prod-card p-5 h-96 animate-pulse bg-[#0f1813]" />
             </div>
-            <div className="lg:col-span-8 xl:col-span-9 flex flex-col gap-4">
-              <div className="h-[500px] bg-slate-900/80 border border-slate-800 rounded-lg animate-pulse" />
-              <div className="grid grid-cols-4 gap-3">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="h-24 bg-slate-900/80 border border-slate-800 rounded-lg animate-pulse" />
-                ))}
-              </div>
+            <div className="lg:col-span-8">
+              <div className="h-[580px] bg-[#0c1611] rounded-2xl animate-pulse" />
             </div>
           </div>
         ) : (
-          <div className="flex flex-col lg:flex-row gap-5 items-start">
-            {/* Left Panel */}
-            <div className="w-full lg:w-[320px] flex-none flex flex-col gap-4">
-              <Controls
-                neighborhoods={neighborhoods}
-                source={source}
-                setSource={handleSourceChange}
-                target={target}
-                setTarget={handleTargetChange}
-                mode={mode}
-                setMode={handleModeChange}
-                alpha={alpha}
-                setAlpha={handleAlphaChange}
-                onCalculate={handleCalculate}
-                onSpikeTriggered={handleTriggerSpike}
-                loading={loadingRoute}
-                spikeLoading={loadingSpike}
-                compareMode={compareMode}
-                setCompareMode={handleCompareModeToggle}
-                onCompare={handleCompare}
-                loadingCompare={loadingCompare}
-                riders={riders}
-                selectedRiderId={selectedRiderId}
-                setSelectedRiderId={handleRiderChange}
-                maxDeliveryMinutes={maxDeliveryMinutes}
-                setMaxDeliveryMinutes={handleMaxDeliveryMinutesChange}
-                previewRoute={currentRoute}
-                onCommitRoute={handleCommitRoute}
-                loadingCommit={loadingCommit}
-              />
+          <div className="flex flex-col lg:flex-row gap-6 items-start">
+            {/* Left Column: Tabbed Navigation & Controls */}
+            <div className="w-full lg:w-[380px] flex-none flex flex-col gap-4">
+              {/* Tab Selector */}
+              <div className="flex bg-[#121f18] border border-white/10 rounded-xl p-1 gap-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('plan')}
+                  className={`flex-1 py-1.5 text-center text-xs rounded-lg font-medium transition-all cursor-pointer ${
+                    activeTab === 'plan'
+                      ? 'bg-emerald-600 text-white font-semibold shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Plan Drift
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('joypins')}
+                  className={`flex-1 py-1.5 text-center text-xs rounded-lg font-medium transition-all cursor-pointer ${
+                    activeTab === 'joypins'
+                      ? 'bg-emerald-600 text-white font-semibold shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Joy Pins ({joyPins.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('journal')}
+                  className={`flex-1 py-1.5 text-center text-xs rounded-lg font-medium transition-all cursor-pointer ${
+                    activeTab === 'journal'
+                      ? 'bg-emerald-600 text-white font-semibold shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Daily Journal
+                </button>
+              </div>
 
-              {/* Rider Exposure Budgets Panel */}
-              <RiderPanel
-                riders={riders}
-                loading={loadingRiders}
-                onResetRider={handleResetRider}
-                onResetAll={handleResetAll}
-                pendingRider={pendingRider}
-              />
+              {/* Tab 1: Plan Walk */}
+              {activeTab === 'plan' && (
+                <Controls
+                  neighborhoods={neighborhoods}
+                  source={source}
+                  setSource={handleSourceChange}
+                  target={target}
+                  setTarget={handleTargetChange}
+                  mode={mode}
+                  setMode={handleModeChange}
+                  mood={mood}
+                  setMood={handleMoodChange}
+                  serenityWeight={serenityWeight}
+                  setSerenityWeight={handleSerenityWeightChange}
+                  onCalculate={() => calculateRoute(source, target, mode, mood, serenityWeight, true)}
+                  onGoldenHourTriggered={handleTriggerGoldenHour}
+                  loading={loadingRoute}
+                  goldenHourLoading={loadingGoldenHour}
+                  goldenHourActive={goldenHourActive}
+                  compareMode={compareMode}
+                  setCompareMode={handleCompareModeToggle}
+                  onCompare={handleCompare}
+                  loadingCompare={loadingCompare}
+                />
+              )}
+
+              {/* Tab 2: Joy Pins Community Feed */}
+              {activeTab === 'joypins' && (
+                <JoyPinsPanel
+                  joyPins={joyPins}
+                  neighborhoods={neighborhoods}
+                  onAddPin={handleAddJoyPin}
+                  onLikePin={handleLikeJoyPin}
+                  onSelectPin={(pin) => setSelectedPin(pin)}
+                  loading={false}
+                />
+              )}
+
+              {/* Tab 3: Daily Journal */}
+              {activeTab === 'journal' && (
+                <WellbeingMetricsPanel
+                  wellbeingData={wellbeingData}
+                  onResetJournal={handleResetJournal}
+                  loading={loadingCommit}
+                />
+              )}
             </div>
 
-            {/* Right Panel: Map + Metrics + High Risk */}
-            <div className="flex-1 min-w-0 flex flex-col gap-4 w-full">
-              {/* Map */}
+            {/* Right Column: Full-Featured Map & Route Summary Card */}
+            <div className="flex-1 min-w-0 flex flex-col gap-5 w-full">
+              {/* Map Canvas */}
               <MapView
                 neighborhoods={neighborhoods}
-                roads={roads}
                 currentRoute={currentRoute}
                 source={source}
                 target={target}
                 mode={mode}
                 compareMode={compareMode}
                 comparisonResult={comparisonResult}
+                joyPins={joyPins}
+                selectedPin={selectedPin}
               />
 
-              {/* Metrics */}
+              {/* Route Results & Serenity Score */}
               <MetricsPanel
                 currentRoute={currentRoute}
                 neighborhoods={neighborhoods}
@@ -549,12 +588,7 @@ export default function EcoRouteDashboard() {
                 compareMode={compareMode}
                 comparisonResult={comparisonResult}
                 loadingCompare={loadingCompare}
-              />
-
-              {/* High-Risk Zones */}
-              <HighRiskPanel
-                highRiskNodes={highRiskNodes}
-                loading={loadingSpike}
+                onCommitRoute={handleCommitWalk}
               />
             </div>
           </div>
